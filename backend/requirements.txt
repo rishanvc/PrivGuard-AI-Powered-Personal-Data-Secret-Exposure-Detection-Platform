@@ -17,3 +17,15 @@ django-environ==0.14.0        # MIT. Typed .env parsing; keeps secrets out of so
 
 # --- Browser security ---
 django-cors-headers==4.9.0    # MIT. Controlled cross-origin access for the Vite dev server (NFR-017)
+
+# --- Document extraction (Cycle 4) ---
+openpyxl==3.1.5               # MIT (+ et-xmlfile, MIT). XLSX cells in streaming read-only mode (FR-025)
+defusedxml==0.7.1             # PSF. Refuses DTDs/entities in untrusted XML. openpyxl switches its
+                              # parsers to defusedxml automatically when installed (verified in
+                              # openpyxl/xml/functions.py); our DOCX/PPTX reader uses it directly.
+                              # Last release 2021: small and stable, flagged per SRS 2.5 #10.
+pypdfium2==5.14.0             # BSD-3-Clause / Apache-2.0. PDFium (Chrome's PDF engine) for PDF text
+                              # (FR-022); reused for OCR rendering (Cycle 8) and redaction (Cycle 10).
+                              # Bundles 18 third-party notices, all permissive; the only GPL text
+                              # covers ICU's Autoconf build scripts, not the shipped binary. The
+                              # notices must accompany any redistributed bundle (Cycle 12).

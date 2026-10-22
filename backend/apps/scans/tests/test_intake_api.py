@@ -142,7 +142,7 @@ class FolderUploadTests(ScanTestBase):
     def test_bidi_disguised_traversal_in_a_path_is_rejected(self):
         # Paths arrive as plain form fields, which Django does NOT sanitise
         # (unlike multipart filenames) - so our own check is what stops this.
-        r = self.upload([("x.txt", b"synthetic\n")], scan_type="folder", paths=["project/.‮./x.txt"])
+        r = self.upload([("x.txt", b"synthetic\n")], scan_type="folder", paths=["project/.\u202e./x.txt"])
         row = next(iter(self.inventory(r.data["id"]).values()))
         self.assertEqual(row["status"], "rejected")
         self.assertIn("traversal", row["reason"])
@@ -159,7 +159,7 @@ class FolderUploadTests(ScanTestBase):
 
 class NameSafetyTests(ScanTestBase):
     def test_bidi_spoofed_name_is_shown_with_its_real_extension(self):
-        r = self.upload([("invoice‮fdp.exe", EXE)])
+        r = self.upload([("invoice\u202efdp.exe", EXE)])
         row = next(iter(self.inventory(r.data["id"]).values()))
         self.assertEqual(row["file_name"], "invoicefdp.exe")
         self.assertEqual(row["status"], "unsupported")

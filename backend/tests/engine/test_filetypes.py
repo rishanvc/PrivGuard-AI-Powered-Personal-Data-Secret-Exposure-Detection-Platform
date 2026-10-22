@@ -137,9 +137,16 @@ class UnsupportedTests(unittest.TestCase):
                 self.assertEqual(result.file_type, file_type)
                 self.assertIn("OCR", result.reason)
 
-    def test_powerpoint_is_unsupported(self):
+    def test_powerpoint_is_supported_since_cycle_4(self):
         result, _ = inspect("deck.pptx", PPTX)
-        self.assertEqual(result.verdict, Verdict.UNSUPPORTED)
+        self.assertEqual(result.verdict, Verdict.SUPPORTED)
+        self.assertEqual(result.file_type, "pptx")
+
+    def test_zip_renamed_to_pptx_is_rejected(self):
+        # Now that PPTX is supported, the structure check applies to it too.
+        result, _ = inspect("deck.pptx", PLAIN_ZIP)
+        self.assertEqual(result.verdict, Verdict.REJECTED)
+        self.assertIn("PowerPoint presentation", result.reason)
 
     def test_unknown_types_are_unsupported(self):
         for name in ("setup.exe", "movie.mp4", "library.dll"):

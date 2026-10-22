@@ -19,7 +19,7 @@ from typing import BinaryIO
 
 # Bump when classification rules change, so each scan records which rules
 # inventoried it (kept in Scan.configuration; reported per FR-108).
-INTAKE_VERSION = 1
+INTAKE_VERSION = 2  # 2: PPTX became supported (Cycle 4)
 
 SNIFF_BYTES = 8192
 MAX_OOXML_PARTS = 10_000
@@ -88,12 +88,9 @@ _BINARY: dict[str, _BinaryFormat] = {
     "pdf": _BinaryFormat("pdf", "PDF", (b"%PDF-",), True, search_window=1024),
     "docx": _BinaryFormat("docx", "Word document", (_ZIP,), True, ooxml_part="word/document.xml"),
     "xlsx": _BinaryFormat("xlsx", "Excel workbook", (_ZIP,), True, ooxml_part="xl/workbook.xml"),
-    # Recognised, but not processable yet. Flipping `supported` later turns on
-    # the signature and structure checks below with no other change.
-    "pptx": _BinaryFormat(
-        "pptx", "PowerPoint presentation", (_ZIP,), False,
-        "PowerPoint files are not supported yet.", ooxml_part="ppt/presentation.xml",
-    ),
+    "pptx": _BinaryFormat("pptx", "PowerPoint presentation", (_ZIP,), True, ooxml_part="ppt/presentation.xml"),
+    # Recognised, but not processable yet. Flipping `supported` turns on the
+    # signature check below with no other change (OCR arrives in Cycle 8).
     "png": _BinaryFormat("png", "PNG image", (b"\x89PNG\r\n\x1a\n",), False, _NO_OCR_YET),
     "jpg": _BinaryFormat("jpeg", "JPEG image", (b"\xff\xd8\xff",), False, _NO_OCR_YET),
     "jpeg": _BinaryFormat("jpeg", "JPEG image", (b"\xff\xd8\xff",), False, _NO_OCR_YET),

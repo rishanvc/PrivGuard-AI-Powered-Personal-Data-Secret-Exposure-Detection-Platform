@@ -13,6 +13,7 @@ requirements; this file records *how* they are being met.
 - **Decision:** PrivGuard is MIT-licensed. Runtime dependencies must be MIT, BSD, Apache-2.0, or MPL-2.0.
 - **Why:** The repository is public, and the project is currently non-commercial but may not stay that way. AGPL is triggered by distribution and network use, not by commerce, so an AGPL dependency would force the whole project to AGPL.
 - **Consequences:** PyMuPDF (AGPL-3.0) is excluded. PDF extraction will use `pdfplumber`/`pypdf` (Cycle 4); PDF redaction will rasterize pages via `pypdfium2` (Cycle 10).
+  *Superseded in Cycle 4 by D-022: `pypdfium2` handles extraction as well; `pdfplumber` itself depends on `pypdfium2`.*
 - **Note:** `psycopg` is LGPL-3.0, which is acceptable. LGPL copyleft stops at the library boundary, and a dynamically imported, user-replaceable package does not affect PrivGuard's license. Separately invoked GPL tools (a binary we run and read output from) are likewise not linked.
 
 ### D-002 · `privguard_engine` is framework-free
@@ -103,6 +104,32 @@ requirements; this file records *how* they are being met.
 
 ### D-020 · Folder upload through the browser
 - **Decision:** folders are uploaded with the browser's folder picker, sending each file's relative path. The server never reads the local filesystem in this cycle. Server-side folder/repository scanning, exclusion rules, and ZIP extraction belong to Cycle 8.
+
+---
+
+## Cycle 4 — Text Extraction
+
+### D-021 · Segments, and extracted text is never stored
+- **Decision:** every extractor yields `Segment(text, location)` with a location such as `{"line": 12}`, `{"page": 3}`, `{"sheet": "Payroll", "cell": "C7", "header": "Contact"}` or `{"slide": 2, "part": "notes"}`. Text goes to a consumer (Cycle 5's detectors) and is never written to the database or disk; only status, counts and fixed-wording notes are kept (FR-115, FR-030).
+- **Why:** detectors stay independent of file formats (SRS 6.2, principle 2), and a privacy tool shouldn't create a second copy of the sensitive content it scans.
+- **For learning and debugging:** `python -m privguard_engine.extractors <local file>` prints segments for a local file.
+
+### D-022 · Extraction dependencies
+- **Installed:** `openpyxl` 3.1.5 (MIT; streaming read-only mode, formulas as written, hidden sheets included), `defusedxml` 0.7.1 (PSF; openpyxl switches both `iterparse` and `fromstring` to it automatically, verified in its source), `pypdfium2` 5.14.0 (BSD-3/Apache-2.0; PDFium). pypdfium2's 18 bundled notices were reviewed: all permissive; the only GPL text covers ICU's Autoconf build scripts, not the shipped binary. The notices must travel with any redistributed bundle (Cycle 12).
+- **Not installed:** `python-docx` (needs `lxml`, and its paragraph text omits tracked deletions), `pdfplumber` (depends on `pypdfium2` plus `pdfminer.six` and Pillow), `pypdf` (a second PDF library alongside `pypdfium2`), `pandas` (no dataframes needed; NumPy on an 8 GB machine), `charset-normalizer` (BOM → strict UTF-8 → Windows-1252 suffices).
+
+### D-023 · Our own OOXML reader for DOCX and PPTX
+- **Decision:** read Office XML parts directly with `zipfile` + `defusedxml` (DTDs forbidden). DOCX: body, tables, headers, footers, footnotes, endnotes, comments and their authors, **tracked deletions**, **field codes**, document properties. PPTX: slides in **presentation order** and **speaker notes**.
+- **Why:** captures text Word or PowerPoint doesn't display but the file still contains (FR-099), makes PPTX (FR-026) nearly free, avoids `lxml`, and builds the XML knowledge Cycle 10 needs for DOCX redaction.
+- **Defences:** declared ZIP sizes and compression ratios are checked before anything is decompressed; reads are byte-counted; "Strict Open XML" documents are reported as not supported rather than silently empty.
+
+### D-024 · Formats are read as lines, not parsed
+- **Decision:** JSON, YAML, XML, configuration and code are extracted line by line. CSV is parsed (cells, headers and starting line numbers); XLSX cells are read through openpyxl.
+- **Why:** a parser is attack surface (unsafe YAML loaders, XML entities), and line numbers stay exactly what an editor shows. Structure-aware context can be added if Cycle 5–6 detection needs it.
+
+### D-025 · No invisible characters in source code
+- **Decision:** source files must not contain literal bidirectional-override or zero-width characters; code that needs one writes an escape such as `\u202e`. Enforced by `tests/engine/test_source_hygiene.py`, which also checks that its own scanner can catch a planted character.
+- **Why:** "Trojan Source" (CVE-2021-42574): such characters make code display differently from how it runs. One slipped into a Cycle 3 test through a tool's escape handling and was fixed in Cycle 4.
 
 ---
 
