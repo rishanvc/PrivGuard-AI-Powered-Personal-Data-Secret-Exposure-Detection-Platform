@@ -1,4 +1,7 @@
+import { useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
+
+import { useAuth } from '../auth/useAuth'
 
 /**
  * Application shell: sidebar navigation + content area.
@@ -22,10 +25,47 @@ function linkClass({ isActive }) {
   ].join(' ')
 }
 
+function UserPanel() {
+  const { user, logout } = useAuth()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  async function handleLogout() {
+    setBusy(true)
+    setError(null)
+    try {
+      await logout() // on success, RequireAuth redirects to /login
+    } catch {
+      // The session may still be valid server-side, so say so plainly.
+      setError('Logout failed. You may still be signed in.')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="mt-auto border-t border-slate-200 pt-4">
+      <div className="px-3">
+        <p className="truncate text-sm font-medium text-slate-900">{user?.username}</p>
+        <p className="text-xs text-slate-500">{user?.role_display}</p>
+      </div>
+      <button
+        type="button"
+        onClick={handleLogout}
+        disabled={busy}
+        className="mt-3 w-full rounded-md px-3 py-2 text-left text-sm font-medium text-slate-600
+                   hover:bg-slate-100 hover:text-slate-900 disabled:opacity-50"
+      >
+        {busy ? 'Signing out…' : 'Log out'}
+      </button>
+      {error && <p role="alert" className="mt-1 px-3 text-xs text-red-700">{error}</p>}
+    </div>
+  )
+}
+
 export default function Layout() {
   return (
     <div className="flex h-full bg-slate-50">
-      <aside className="w-60 shrink-0 border-r border-slate-200 bg-white p-4">
+      <aside className="flex w-60 shrink-0 flex-col border-r border-slate-200 bg-white p-4">
         <div className="mb-6 px-3">
           <h1 className="text-lg font-semibold text-slate-900">PrivGuard</h1>
           <p className="text-xs text-slate-500">Exposure detection</p>
@@ -37,6 +77,7 @@ export default function Layout() {
             </NavLink>
           ))}
         </nav>
+        <UserPanel />
       </aside>
 
       <main className="flex-1 overflow-y-auto">

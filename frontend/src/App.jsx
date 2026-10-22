@@ -1,14 +1,26 @@
 import { Route, Routes } from 'react-router-dom'
 
+import RequireAuth from './auth/RequireAuth'
 import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
+import Login from './pages/Login'
 import Placeholder from './pages/Placeholder'
 
-/** Routes mirror the screens in SRS 5.1. */
+/**
+ * Routes mirror the screens in SRS 5.1.
+ * Everything except /login sits behind RequireAuth.
+ */
 export default function App() {
   return (
     <Routes>
-      <Route element={<Layout />}>
+      <Route path="/login" element={<Login />} />
+      <Route
+        element={
+          <RequireAuth>
+            <Layout />
+          </RequireAuth>
+        }
+      >
         <Route index element={<Dashboard />} />
         <Route
           path="scans"

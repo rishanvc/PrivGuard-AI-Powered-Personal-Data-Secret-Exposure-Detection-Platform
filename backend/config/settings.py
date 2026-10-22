@@ -83,6 +83,14 @@ DATABASES = {"default": env.db("DATABASE_URL")}
 # first migrate - swapping AUTH_USER_MODEL afterwards is a painful rebuild.
 AUTH_USER_MODEL = "accounts.User"
 
+# SRS 5.1.1: log in with username OR email. Subclasses ModelBackend, so
+# Django admin login and the timing-attack mitigation keep working.
+AUTHENTICATION_BACKENDS = ["apps.accounts.backends.EmailOrUsernameBackend"]
+
+# FR-001 / FR-007: self-registration is OFF by default (local single-user
+# mode). Accounts are created with createsuperuser or the Django admin.
+ALLOW_REGISTRATION = env.bool("ALLOW_REGISTRATION", default=False)
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # ---------------------------------------------------------------- auth
@@ -104,10 +112,18 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
-    # Revisited in Cycle 2 when we decide session vs token auth.
+    # Cycle 2 decision: session cookies, not tokens. The session cookie is
+    # HttpOnly, so even an XSS bug in a rendered findings preview cannot read
+    # it - a token in localStorage could be stolen. See docs/decisions.
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework.authentication.SessionAuthentication",
     ],
+    # Brute-force protection for login/registration (ScopedRateThrottle).
+    # Counters live in the default cache, which is per-process: correct for
+    # local mode, but multi-worker deployments need a shared cache (Cycle 12).
+    "DEFAULT_THROTTLE_RATES": {
+        "auth": env("AUTH_THROTTLE_RATE", default="5/min"),
+    },
     # FR-088: paginate large result sets.
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 25,
@@ -118,6 +134,20 @@ REST_FRAMEWORK = {
 # NFR-017. Explicit allow-list only - never CORS_ALLOW_ALL_ORIGINS.
 CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[])
 CORS_ALLOW_CREDENTIALS = True
+
+# ---------------------------------------------------------------- sessions & CSRF
+
+# FR-006. HttpOnly: JavaScript can never read the session cookie.
+# SameSite=Lax: sent on same-site requests (localhost:5173 -> localhost:8000
+# counts as same-site; ports don't matter), withheld on cross-site POSTs.
+SESSION_COOKIE_AGE = env.int("SESSION_COOKIE_AGE_SECONDS", default=8 * 60 * 60)
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SAMESITE = "Lax"
+
+# The SPA runs on a different origin (port) from the API, so Django's CSRF
+# Origin-header check must trust it explicitly.
+CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=CORS_ALLOWED_ORIGINS)
 
 # ---------------------------------------------------------------- storage
 

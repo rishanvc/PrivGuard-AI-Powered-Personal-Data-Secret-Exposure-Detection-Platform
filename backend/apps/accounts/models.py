@@ -1,7 +1,24 @@
 """User model and roles (SRS 7.2.1, FR-004)."""
 
 from django.contrib.auth.models import AbstractUser
+from django.contrib.auth.models import UserManager as DjangoUserManager
 from django.db import models
+from django.db.models import Q
+from django.db.models.functions import Lower
+
+
+class UserManager(DjangoUserManager):
+    """Superusers get the PrivGuard Administrator role automatically.
+
+    Without this, `createsuperuser` would produce an account Django treats as
+    all-powerful but PrivGuard treats as a General User, because `role`
+    defaults to GENERAL. Two permission systems disagreeing about the same
+    account is exactly the kind of gap that causes access-control bugs.
+    """
+
+    def create_superuser(self, username, email=None, password=None, **extra_fields):
+        extra_fields.setdefault("role", self.model.Role.ADMIN)
+        return super().create_superuser(username, email, password, **extra_fields)
 
 
 class User(AbstractUser):
@@ -38,9 +55,22 @@ class User(AbstractUser):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    objects = UserManager()
+
     class Meta:
         db_table = "privguard_user"
         indexes = [models.Index(fields=["role"])]
+        constraints = [
+            # Login accepts an email address (SRS 5.1.1), so two accounts must
+            # never share one - including "Alice@x.com" vs "alice@x.com".
+            # Blank emails are exempt so accounts without an email still work.
+            models.UniqueConstraint(
+                Lower("email"),
+                condition=~Q(email=""),
+                name="uniq_user_email_ci",
+                violation_error_message="A user with this email address already exists.",
+            ),
+        ]
 
     def __str__(self) -> str:
         return f"{self.username} ({self.get_role_display()})"
