@@ -4,7 +4,10 @@ import RequireAuth from './auth/RequireAuth'
 import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
 import Login from './pages/Login'
+import NewScan from './pages/NewScan'
 import Placeholder from './pages/Placeholder'
+import ScanDetail from './pages/ScanDetail'
+import Scans from './pages/Scans'
 
 /**
  * Routes mirror the screens in SRS 5.1.
@@ -22,10 +25,9 @@ export default function App() {
         }
       >
         <Route index element={<Dashboard />} />
-        <Route
-          path="scans"
-          element={<Placeholder title="Scans" cycle="3" description="Create scans and track their progress." />}
-        />
+        <Route path="scans" element={<Scans />} />
+        <Route path="scans/new" element={<NewScan />} />
+        <Route path="scans/:scanId" element={<ScanDetail />} />
         <Route
           path="findings"
           element={<Placeholder title="Findings" cycle="5" description="Review detected sensitive information." />}

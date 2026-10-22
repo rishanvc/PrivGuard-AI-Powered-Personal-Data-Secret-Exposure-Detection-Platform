@@ -1,0 +1,2 @@
+Synthetic meeting notes for PrivGuard intake testing.
+Contains no real data.

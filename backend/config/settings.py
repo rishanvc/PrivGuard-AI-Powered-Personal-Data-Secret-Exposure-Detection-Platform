@@ -47,6 +47,11 @@ MIDDLEWARE = [
     # CorsMiddleware must sit as high as possible, and definitely before
     # CommonMiddleware, so CORS headers are attached even to redirects/errors.
     "corsheaders.middleware.CorsMiddleware",
+    # Rejects oversized uploads from the Content-Length header BEFORE anything
+    # reads the body. Placed after CorsMiddleware so the 413 response still
+    # carries CORS headers - otherwise the browser would hide it behind a
+    # generic network error.
+    "apps.core.middleware.RequestSizeLimitMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -163,22 +168,44 @@ REDACTED_ROOT = VAR_ROOT / "redacted"
 REPORT_ROOT = VAR_ROOT / "reports"
 TMP_ROOT = VAR_ROOT / "tmp"
 
-MEDIA_ROOT = UPLOAD_ROOT
+# Uploads do NOT use MEDIA_ROOT. They live in apps.scans.storage, a private
+# storage with no URL at all. A common tutorial line -
+#     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+# - would otherwise publish every uploaded file on the web. MEDIA_ROOT points
+# at an unused folder inside var/ so nothing stray lands in the project tree.
+MEDIA_ROOT = VAR_ROOT / "media"
 MEDIA_URL = "/media/"
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 # ---------------------------------------------------------------- scan limits
 
-# FR-019, NFR-003, NFR-010.
+# FR-019, NFR-003, NFR-010. Three layers, each enforced at a different point:
+#   MAX_TOTAL_SCAN_SIZE_MB  whole request -> 413 from RequestSizeLimitMiddleware,
+#                                            before the body is read
+#   MAX_FILES_PER_SCAN      file count    -> 400 from Django's multipart parser
+#   MAX_UPLOAD_SIZE_MB      each file     -> that file is rejected; the rest continue
 MAX_UPLOAD_SIZE_MB = env.int("MAX_UPLOAD_SIZE_MB", default=25)
 MAX_TOTAL_SCAN_SIZE_MB = env.int("MAX_TOTAL_SCAN_SIZE_MB", default=200)
+MAX_FILES_PER_SCAN = env.int("MAX_FILES_PER_SCAN", default=200)
 SCAN_RETENTION_DAYS = env.int("SCAN_RETENTION_DAYS", default=30)
 
-# Reject oversized request bodies at the framework edge, before our code runs.
-DATA_UPLOAD_MAX_MEMORY_SIZE = MAX_UPLOAD_SIZE_MB * 1024 * 1024
-FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024  # spool larger uploads to disk
-DATA_UPLOAD_MAX_NUMBER_FILES = 200
+DATA_UPLOAD_MAX_NUMBER_FILES = MAX_FILES_PER_SCAN
+
+# Cycle 1 correction: this setting does NOT limit file uploads. Django applies
+# it only to ordinary form fields and JSON bodies (verified in
+# django/http/multipartparser.py - the check sits inside `if item_type == FIELD`).
+# File sizes are enforced by the three layers above. Django's default is kept.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 2_621_440  # 2.5 MB
+
+# Uploads larger than this spool to a temporary file instead of memory. Those
+# temp files hold sensitive content, so they go in var/tmp rather than the
+# system-wide temp folder (NFR-023). Permissions apply on Linux; on Windows the
+# folder's ACLs govern access.
+FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
+FILE_UPLOAD_TEMP_DIR = str(TMP_ROOT)
+FILE_UPLOAD_PERMISSIONS = 0o600
+FILE_UPLOAD_DIRECTORY_PERMISSIONS = 0o700
 
 # ---------------------------------------------------------------- optional components
 

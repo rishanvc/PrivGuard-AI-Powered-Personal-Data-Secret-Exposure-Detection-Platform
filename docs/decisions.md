@@ -73,6 +73,39 @@ requirements; this file records *how* they are being met.
 
 ---
 
+## Cycle 3 — File Upload and Inventory
+
+### D-014 · File type decided by content, not by name
+- **Decision:** `privguard_engine.intake` checks magic bytes, Office (ZIP) structure, and a NUL-byte text heuristic. The extension says what a file *claims* to be; the bytes decide whether the claim holds. Hand-written signatures, no dependency.
+- **"Supported" means "PrivGuard can process it."** PPTX, images (until OCR) and archives are recognised but reported as unsupported with a specific reason, rather than accepted and silently not scanned (FR-013).
+- **Limitation:** validation is not safety — polyglot files are valid as two formats. Safety comes from never executing content (NFR-011).
+
+### D-015 · Upload size enforced in middleware, from Content-Length
+- **Decision:** `RequestSizeLimitMiddleware` returns 413 when the declared size exceeds the per-scan limit, before anything reads the body. File count is capped by Django's parser; per-file size is checked per file so one oversized file doesn't sink the scan (NFR-028).
+- **Why middleware:** DRF's CSRF check reads `request.POST`, which parses the entire multipart body onto disk before any view code runs.
+- **Why Content-Length suffices:** under WSGI, Django never reads past the declared length. ASGI deployments need a server-level limit too (Cycle 12).
+- **Correction:** Cycle 1's settings claimed `DATA_UPLOAD_MAX_MEMORY_SIZE` limited request bodies. It does not apply to file data (verified in Django's source); the comment was corrected.
+
+### D-016 · Private storage under random names
+- **Decision:** accepted files are stored as `var/uploads/<user>/<scan>/<random hex>` in a storage with **no URL**. The uploader's filename never reaches the filesystem; a sanitised display name is kept in the database. Uploads do not use `MEDIA_ROOT`. Spooled temp files go to `var/tmp`, not the system temp folder.
+- **Why:** filenames are attacker-controlled (traversal, reserved device names, bidi spoofing); a URL-less storage can't be exposed by a stray `static()` route.
+
+### D-017 · UUID primary keys for scans and files
+- **Why:** sequential IDs leak how many scans exist and invite guessing. Ownership checks already return 404; UUIDs remove the leak too.
+
+### D-018 · Lifecycle transitions by compare-and-swap; Start only queues
+- **Decision:** status changes use a conditional `UPDATE ... WHERE status IN (...)`, so of two simultaneous requests exactly one succeeds. In Cycle 3, Start moves a draft to `queued`; nothing processes it yet.
+- **Why defer the worker:** there is no work to run until extraction exists, and the choice should be made knowing how long scans take. Django 6.1's built-in tasks framework ships only immediate and dummy backends, so Cycle 4 will add a real (database-backed) worker backend.
+
+### D-019 · Deletion now, files before records
+- **Decision:** `DELETE /api/scans/{id}/` was pulled forward from Cycle 11, because Cycle 3 is the first cycle that stores sensitive files (NFR-024). Files are removed first; if that fails, the record is kept so the user can retry.
+- **Supporting choices:** `Scan.user` uses `PROTECT` so deleting a user can't strand files on disk; scans are **not** registered in the Django admin, which would otherwise let staff browse every user's inventory (a bypass of D-009) and delete rows without removing files.
+
+### D-020 · Folder upload through the browser
+- **Decision:** folders are uploaded with the browser's folder picker, sending each file's relative path. The server never reads the local filesystem in this cycle. Server-side folder/repository scanning, exclusion rules, and ZIP extraction belong to Cycle 8.
+
+---
+
 ## Known temporary workarounds
 
 ### W-001 · `frontend/.npmrc` points npm at Git Bash

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
-import { apiGet, apiPost, setCsrfToken } from '../lib/api'
+import { apiGet, apiPost, setCsrfToken, setSessionCheck } from '../lib/api'
 import { AuthContext } from './useAuth'
 
 /**
@@ -37,6 +37,24 @@ export function AuthProvider({ children }) {
     return () => {
       cancelled = true
     }
+  }, [])
+
+  // Session expiry while the tab is open (deferred from Cycle 2). When any API
+  // call is refused with 401/403, ask the server whether we're still logged
+  // in. Only a 401/403 from /auth/me/ itself logs the UI out - a network blip
+  // must not, and an ordinary "not allowed" leaves /auth/me/ answering 200.
+  useEffect(() => {
+    setSessionCheck(() => {
+      apiGet('/auth/me/')
+        .then((me) => setUser(me))
+        .catch((err) => {
+          if (err?.status === 401 || err?.status === 403) {
+            setUser(null)
+            setStatus('anonymous') // RequireAuth now redirects to /login
+          }
+        })
+    })
+    return () => setSessionCheck(null)
   }, [])
 
   const login = useCallback(async (identifier, password) => {
