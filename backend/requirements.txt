@@ -1,0 +1,19 @@
+# PrivGuard backend - direct dependencies
+# Versions pinned per SRS Section 15 (risk: "Dependency changes / installation failures").
+# Every package here must carry a license compatible with PrivGuard's MIT license.
+# Transitive dependencies are resolved by pip.
+
+# --- Web framework and API layer ---
+Django==6.1.2                 # BSD-3-Clause. ORM, migrations, auth, password hashing (FR-003)
+djangorestframework==3.18.3   # BSD-3-Clause. JSON APIs, serializers, permission classes (FR-005, NFR-018)
+
+# --- Database ---
+psycopg[binary]==3.3.6        # LGPL-3.0. PostgreSQL adapter. LGPL copyleft stops at the library
+                              # boundary: dynamically imported, user-replaceable, so it does not
+                              # affect PrivGuard's MIT licensing.
+
+# --- Configuration ---
+django-environ==0.14.0        # MIT. Typed .env parsing; keeps secrets out of source (NFR-016, SRS 13.2)
+
+# --- Browser security ---
+django-cors-headers==4.9.0    # MIT. Controlled cross-origin access for the Vite dev server (NFR-017)

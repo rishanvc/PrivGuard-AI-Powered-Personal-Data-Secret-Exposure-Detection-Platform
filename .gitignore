@@ -70,20 +70,32 @@ pnpm-debug.log*
 
 # ---------- PrivGuard runtime data ----------
 # Scanned/uploaded user files and scan output may contain real sensitive data.
-uploads/
-scans/
-scan_output/
-reports/
-redacted/
-tmp/
-temp/
+# All mutable scan artifacts live under backend/var/ (uploads, extracted text,
+# redacted copies, generated reports, scratch). One anchored rule covers them.
+#
+# NOTE: these rules are deliberately ANCHORED with a leading slash. Unanchored
+# names such as "scans/" or "reports/" match at EVERY level, which would have
+# silently ignored source directories like backend/apps/scans/.
+/backend/var/
+/uploads/
+/scan_output/
+/redacted/
+/tmp/
+/temp/
 
 # Local AI models and caches (large binaries)
-models/
+/models/
 *.gguf
 *.bin
 *.safetensors
 .ollama/
+
+# ---------- Local workaround (TEMPORARY) ----------
+# Points npm's script runner at bash instead of cmd.exe, because the project
+# path contains "&" which cmd.exe treats as a command separator. Hardcodes a
+# Windows path, so it must NOT be committed - delete it once the project folder
+# is renamed to a path without "&" or spaces.
+/frontend/.npmrc
 
 # ---------- Editors / OS ----------
 .vscode/

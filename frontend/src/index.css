@@ -1,0 +1,16 @@
+@import "tailwindcss";
+
+/* Severity palette (NFR-035: consistent labels and visual indicators).
+   Defined once here so every component - findings list, dashboard charts,
+   reports - uses identical colours. Cycle 7 relies on these. */
+@theme {
+  --color-sev-critical: #b91c1c;
+  --color-sev-high:     #ea580c;
+  --color-sev-medium:   #ca8a04;
+  --color-sev-low:      #2563eb;
+  --color-sev-info:     #64748b;
+}
+
+html, body, #root {
+  height: 100%;
+}

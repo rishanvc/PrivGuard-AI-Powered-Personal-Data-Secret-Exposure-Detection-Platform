@@ -41,8 +41,8 @@ remediation advice, but core scanning never depends on it.
 | Frontend | React, Vite, Tailwind CSS, React Router |
 | Backend | Python 3.12, Django, Django REST Framework |
 | Database | PostgreSQL |
-| Extraction | PyMuPDF, python-docx, openpyxl, pandas, Tesseract OCR |
-| Detection | Custom regex + validators, Presidio, Gitleaks |
+| Extraction | pdfplumber / pypdf, python-docx, openpyxl, Tesseract OCR |
+| Detection | Custom regex + validators, spaCy NER, Presidio, Gitleaks |
 | AI (optional) | Ollama with a locally downloaded model |
 
 The core scanning engine runs without a GPU.
@@ -59,3 +59,11 @@ PrivGuard is a detection aid, not a guarantee. It does not promise to catch ever
 exposure or every valid credential, does not revoke credentials or modify external
 accounts, and never uploads scanned data to external services. No findings on a
 document does not mean the document is safe to publish.
+
+## License
+
+MIT - see [LICENSE](LICENSE).
+
+All runtime dependencies are selected for permissive licenses (MIT / BSD /
+Apache-2.0 / MPL-2.0) so PrivGuard can stay MIT. Copyleft-licensed libraries
+are not linked; AGPL alternatives such as PyMuPDF were deliberately excluded.
