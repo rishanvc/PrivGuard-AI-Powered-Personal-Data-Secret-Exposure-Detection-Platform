@@ -16,6 +16,7 @@ import { formatDateTime } from '../lib/format'
 const COMPONENT_LABELS = {
   backend: 'Backend',
   database: 'Database',
+  worker: 'Scan worker',
   ocr: 'OCR engine',
   ai: 'Local AI',
 }
@@ -49,6 +50,7 @@ export default function Dashboard() {
   const recent = useApi('/scans/')
 
   const s = summary.data
+  const workerDown = health.data?.components?.worker?.status === 'error'
 
   return (
     <div className="space-y-8">
@@ -62,6 +64,13 @@ export default function Dashboard() {
         </Link>
       </header>
 
+      {workerDown && (
+        <div role="alert" className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <strong>The scan worker isn&apos;t running</strong>, so started scans will wait in the queue. Start it in a
+          terminal: <code className="font-mono">python manage.py run_worker</code>
+        </div>
+      )}
+
       <section>
         <h3 className="mb-3 text-sm font-semibold text-slate-900">Scan overview</h3>
         {summary.error ? (
@@ -72,12 +81,16 @@ export default function Dashboard() {
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             <MetricCard label="Total scans" value={s?.total_scans} />
             <MetricCard
-              label="Files scanned"
-              value={s?.files_scanned}
-              hint={s ? `${s.files_accepted} accepted, awaiting processing` : null}
+              label="Files processed"
+              value={s?.files_processed}
+              hint={s ? `of ${s.files_accepted} accepted` : null}
             />
-            <MetricCard label="Findings" value={s?.total_findings} hint="Detection arrives in Cycle 5" />
-            <MetricCard label="Critical / high" value={s?.critical_high_findings} hint="Severity arrives in Cycle 7" />
+            <MetricCard
+              label="Findings"
+              value={s?.total_findings}
+              hint={s && s.total_findings === null ? 'No scan searched yet' : 'In scans that were searched'}
+            />
+            <MetricCard label="Critical / high" value={s?.critical_high_findings} hint="Severity arrives in Cycle 6" />
           </div>
         )}
       </section>

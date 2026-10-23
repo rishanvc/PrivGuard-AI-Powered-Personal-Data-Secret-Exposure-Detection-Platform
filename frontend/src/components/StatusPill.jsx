@@ -5,6 +5,7 @@
  *   health   ok | degraded | disabled | error
  *   scans    draft | queued | processing | completed | partially_completed | failed | cancelled
  *   files    pending | completed | skipped | rejected | unsupported (+ processing, failed)
+ *   reading  succeeded | partial | not_supported (+ failed)    - how completely a file was read
  *
  * Pass the human-readable label as children; the raw status picks the colour.
  */
@@ -35,6 +36,10 @@ const STYLES = {
   skipped: GREY,
   rejected: RED,
   unsupported: AMBER,
+  // extraction
+  succeeded: GREEN,
+  partial: AMBER,
+  not_supported: AMBER,
 }
 
 export default function StatusPill({ status, children }) {

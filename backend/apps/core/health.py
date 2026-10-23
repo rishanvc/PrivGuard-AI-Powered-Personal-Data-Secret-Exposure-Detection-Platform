@@ -42,6 +42,24 @@ def check_database():
     return "ok", "Connected"
 
 
+def check_worker():
+    """Is a scan worker running? Without one, queued scans wait forever (Cycle 4)."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.scans.models import WorkerHeartbeat
+
+    try:
+        last_seen = WorkerHeartbeat.objects.order_by("-last_seen").values_list("last_seen", flat=True).first()
+    except Exception:
+        logger.exception("Worker health check failed")
+        return "error", "Worker status unavailable"
+    if last_seen is not None and timezone.now() - last_seen <= timedelta(seconds=settings.WORKER_ALIVE_SECONDS):
+        return "ok", f"Running (last seen {int((timezone.now() - last_seen).total_seconds())} s ago)"
+    return "error", "Not running: queued scans will wait. Start it with 'python manage.py run_worker'."
+
+
 def check_ocr():
     """OCR is optional and arrives in Cycle 8 (FR-027)."""
     if not settings.OCR_ENABLED:
@@ -61,12 +79,14 @@ def check_ai():
 COMPONENT_CHECKS = {
     "backend": check_backend,
     "database": check_database,
+    "worker": check_worker,
     "ocr": check_ocr,
     "ai": check_ai,
 }
 
-# A failure in these means the application cannot do its job.
-REQUIRED_COMPONENTS = {"backend", "database"}
+# A failure in these means the application cannot do its job. Without a
+# worker, scans can be created but never processed - genuinely degraded.
+REQUIRED_COMPONENTS = {"backend", "database", "worker"}
 
 
 def collect_health():

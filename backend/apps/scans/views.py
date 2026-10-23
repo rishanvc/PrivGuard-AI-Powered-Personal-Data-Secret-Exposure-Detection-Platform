@@ -15,6 +15,7 @@ from privguard_engine.intake import supported_extensions
 from . import services
 from .models import Scan
 from .serializers import (
+    FindingSerializer,
     ScanCreateSerializer,
     ScanDetailSerializer,
     ScanListSerializer,
@@ -36,6 +37,12 @@ class StorageFailure(APIException):
 
 class FilePagination(PageNumberPagination):
     page_size = 100
+    page_size_query_param = "page_size"
+    max_page_size = 200
+
+
+class FindingPagination(PageNumberPagination):
+    page_size = 50
     page_size_query_param = "page_size"
     max_page_size = 200
 
@@ -99,6 +106,17 @@ class ScanViewSet(
         paginator = FilePagination()
         page = paginator.paginate_queryset(queryset, request, view=self)
         return paginator.get_paginated_response(ScannedFileSerializer(page, many=True).data)
+
+    @action(detail=True, methods=["get"])
+    def findings(self, request, pk=None):
+        """Most confident first. Search, filters and review arrive in Cycle 7."""
+        scan = self.get_object()  # 404 unless it's the caller's scan
+        queryset = scan.findings.select_related("scanned_file").order_by(
+            "-confidence", "scanned_file__relative_path", "subcategory", "created_at", "id"
+        )
+        paginator = FindingPagination()
+        page = paginator.paginate_queryset(queryset, request, view=self)
+        return paginator.get_paginated_response(FindingSerializer(page, many=True).data)
 
     @action(detail=False, methods=["get"])
     def limits(self, request):

@@ -121,6 +121,7 @@ class CrossUserAccessTests(ScanTestBase):
         operations = {
             "GET detail": lambda: self.client.get(self.url("scan-detail", self.alice_scan)),
             "GET files": lambda: self.client.get(self.url("scan-files", self.alice_scan)),
+            "GET findings": lambda: self.client.get(self.url("scan-findings", self.alice_scan)),
             "POST start": lambda: self.client.post(self.url("scan-start", self.alice_scan)),
             "POST cancel": lambda: self.client.post(self.url("scan-cancel", self.alice_scan)),
             "DELETE": lambda: self.client.delete(self.url("scan-detail", self.alice_scan)),
@@ -134,6 +135,7 @@ class CrossUserAccessTests(ScanTestBase):
         # D-009: least privilege.
         self.client.force_login(self.ada)
         self.assertEqual(self.client.get(self.url("scan-detail", self.alice_scan)).status_code, 404)
+        self.assertEqual(self.client.get(self.url("scan-findings", self.alice_scan)).status_code, 404)
         self.assertEqual(self.client.delete(self.url("scan-detail", self.alice_scan)).status_code, 404)
         self.assert_alice_scan_untouched()
 
@@ -159,5 +161,5 @@ class DashboardTests(ScanTestBase):
         self.assertEqual(data["total_scans"], 2)
         self.assertEqual(data["files_inventoried"], 4)
         self.assertEqual(data["files_accepted"], 3)
-        self.assertEqual(data["files_scanned"], 0)    # nothing processes until Cycle 4
-        self.assertIsNone(data["total_findings"])     # null, not 0: detection doesn't exist yet
+        self.assertEqual(data["files_processed"], 0)  # nothing processed until a worker runs
+        self.assertIsNone(data["total_findings"])     # null, not 0: no scan has been searched yet

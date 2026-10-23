@@ -51,3 +51,23 @@ cd backend
 | `windows-export-utf16.txt` | Succeeded | UTF-16 with a byte-order mark |
 
 All values are synthetic: "Example" names, the reserved `example.com` domain, and UK numbers from the range Ofcom reserves for fiction (020 7946 0xxx). There are no credentials of any kind. `backend/tests/engine/test_extraction_samples.py` checks this table against the real extractors.
+
+## `detection-demo/` — personal data detection (Cycle 5)
+
+Regenerate with `backend/.venv/Scripts/python.exe samples/make_detection_demo.py`.
+
+Upload all four files as one scan to see detection in the app. To see the findings for one file on the command line (masked values only, never the file's text):
+
+```bash
+cd backend
+.venv/Scripts/python.exe -m privguard_engine.detectors ../samples/detection-demo/employees.csv
+```
+
+| File | Findings | What it demonstrates |
+|---|---|---|
+| `employees.csv` | **22** | A column per kind of personal data; the column header supplies the context. Aadhaar numbers pass the Verhoeff checksum. "Female" and "B+" each appear twice, so each is **one** finding with 2 occurrences; both are hidden completely as `****` |
+| `hr-letter.docx` | **9** | Values found by their **labels** in running text: a salutation, employee ID, PAN, date of birth, address, PIN code and mobile number, plus the document's author. `hr@example.com` is found with confidence 0.40, because `example.com` is reserved for documentation |
+| `notes.txt` | **4** | "Customer Name: Ravi Example Order ID: 4421": the name stops where the next field starts. "Please call Asha Example…" is **not** found: a name in prose with no label is a known gap (D-028). Religion is flagged as special-category data |
+| `lookalikes.txt` | **0** | Every line *resembles* personal data: an invoice number that is a valid mobile number, a card number, an ISBN, a non-PAN product code, `logo@2x.png`, an SSH remote, a date without a birth label, a blank form, a bare 12-digit number that passes the Aadhaar checksum |
+
+**Totals: 35 findings.** Names are "Example" people; "98765 43210" is the placeholder common in Indian documentation; PANs are format-valid inventions; email domains are invented (`mailhost-synthetic.net`) or reserved (`example.com`). Aadhaar-format numbers carry a valid check digit: like any 12 digits, one could coincide with an issued number, but on its own it identifies no one. `backend/tests/engine/test_detection_samples.py` checks this table against the real detectors.

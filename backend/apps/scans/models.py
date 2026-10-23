@@ -46,9 +46,11 @@ class Scan(models.Model):
     status = models.CharField(max_length=24, choices=Status.choices, default=Status.DRAFT)
 
     total_files = models.PositiveIntegerField(default=0)
-    processed_files = models.PositiveIntegerField(default=0)  # Cycle 4
-    failed_files = models.PositiveIntegerField(default=0)     # Cycle 4
-    total_findings = models.PositiveIntegerField(default=0)   # Cycle 5
+    processed_files = models.PositiveIntegerField(default=0)  # accepted files the worker has finished
+    failed_files = models.PositiveIntegerField(default=0)     # ...of which could not be read
+    # NULL means "nobody searched" - which is never the same as 0 findings.
+    # Stays NULL until at least one of the scan's files has been searched.
+    total_findings = models.PositiveIntegerField(null=True, blank=True, default=None)
     risk_score = models.PositiveSmallIntegerField(null=True, blank=True)  # 0-100, Cycle 7
 
     # Safe scan options and the limits in force - never credentials (SRS 7.2.2).
@@ -59,6 +61,9 @@ class Scan(models.Model):
     started_at = models.DateTimeField(null=True, blank=True)    # processing began (Cycle 4)
     completed_at = models.DateTimeField(null=True, blank=True)  # reached a finished state
     updated_at = models.DateTimeField(auto_now=True)
+    # Written every few seconds by the worker while processing. A stale value
+    # means the worker died mid-scan, and recovery takes over (apps.scans.worker).
+    heartbeat_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "privguard_scan"
@@ -109,6 +114,17 @@ class ScannedFile(models.Model):
     )
     error_summary = models.CharField(max_length=300, blank=True)  # the reason shown to the user
 
+    # Extraction outcome (FR-028). Counts and fixed-wording notes only - the
+    # extracted TEXT is never stored (FR-115, D-021).
+    extraction_detail = models.CharField(max_length=500, blank=True)  # why it is not "succeeded"
+    extraction_stats = models.JSONField(default=dict, blank=True)     # pages, cells, encoding, seconds...
+    extraction_notes = models.JSONField(default=list, blank=True)     # e.g. "Hidden sheets were read too..."
+    # Detection outcome (Cycle 5): counts per type, and whether findings were
+    # capped. NULL = never searched - its text could not be read, or it was
+    # processed before detection existed. Never the same as 0 findings.
+    detection_stats = models.JSONField(null=True, blank=True, default=None)
+    processed_at = models.DateTimeField(null=True, blank=True)
+
     # FR-017: identical content within a scan is stored and processed once,
     # but every location is still recorded (FR-078).
     duplicate_of = models.ForeignKey(
@@ -127,3 +143,90 @@ class ScannedFile(models.Model):
 
     def __str__(self) -> str:
         return f"{self.relative_path} ({self.get_processing_status_display()})"
+
+
+class Finding(models.Model):
+    """One sensitive value found in one file (SRS 7.2.4).
+
+    Holds a MASKED value and a MASKED preview only: raw values never leave the
+    isolated extraction child (D-032). Repeats of one value in one file are a
+    single finding, with each location listed.
+    """
+
+    class Category(models.TextChoices):
+        PERSONAL = "personal", "Personal information"  # Cycle 6 adds secrets and financial data
+
+    class Severity(models.TextChoices):  # FR-073; assigned from Cycle 6
+        CRITICAL = "critical", "Critical"
+        HIGH = "high", "High"
+        MEDIUM = "medium", "Medium"
+        LOW = "low", "Low"
+        INFORMATIONAL = "informational", "Informational"
+
+    class ReviewStatus(models.TextChoices):  # FR-086; users change it from Cycle 7
+        NEW = "new", "New"
+        CONFIRMED = "confirmed", "Confirmed"
+        FALSE_POSITIVE = "false_positive", "False positive"
+        RESOLVED = "resolved", "Resolved"
+        ACCEPTED_RISK = "accepted_risk", "Accepted risk"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    scan = models.ForeignKey(Scan, on_delete=models.CASCADE, related_name="findings")
+    scanned_file = models.ForeignKey(ScannedFile, on_delete=models.CASCADE, related_name="findings")
+
+    category = models.CharField(max_length=20, choices=Category.choices)
+    subcategory = models.CharField(max_length=40)  # "email_address"...; labels in detectors.TYPE_LABELS
+    severity = models.CharField(max_length=16, choices=Severity.choices, null=True, blank=True)  # NULL until Cycle 6
+    confidence = models.FloatField()  # fixed per rule: a ranking aid, not a probability (D-031)
+    detection_method = models.CharField(max_length=30)  # "pattern", "pattern + checksum", "context"...
+    detection_version = models.PositiveSmallIntegerField()  # which version of the rules found it (SRS 7.3)
+
+    masked_value = models.CharField(max_length=300)
+    context_preview = models.TextField(blank=True)               # masked (FR-085)
+    source_location = models.JSONField()                         # the most confident occurrence
+    other_locations = models.JSONField(default=list, blank=True)  # further distinct locations, capped
+    occurrences = models.PositiveIntegerField(default=1)
+
+    risk_score = models.PositiveSmallIntegerField(null=True, blank=True)  # Cycle 7
+    description = models.TextField()                # why it was flagged: fixed wording, never the file's text
+    remediation = models.TextField(blank=True)      # Cycle 7
+    review_status = models.CharField(max_length=20, choices=ReviewStatus.choices, default=ReviewStatus.NEW)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "privguard_finding"
+        ordering = ["-confidence", "created_at"]
+        indexes = [  # SRS 7.4: scan identifiers, severity, category, review status
+            models.Index(fields=["scan", "category"]),
+            models.Index(fields=["scan", "severity"]),
+            models.Index(fields=["scan", "review_status"]),
+        ]
+        constraints = [
+            models.CheckConstraint(condition=models.Q(confidence__gte=0, confidence__lte=1),
+                                   name="finding_confidence_between_0_and_1"),
+            models.CheckConstraint(condition=models.Q(occurrences__gte=1), name="finding_occurs_at_least_once"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.subcategory} {self.masked_value}"
+
+
+class WorkerHeartbeat(models.Model):
+    """One row per running scan worker, refreshed every few seconds.
+
+    Lets /api/health/ say whether queued scans will actually be processed
+    (FR-119, FR-120). A worker removes its row when it stops cleanly; rows
+    from workers that crashed simply grow old and are ignored.
+    """
+
+    name = models.CharField(max_length=200, primary_key=True)  # "<host>:<process id>"
+    started_at = models.DateTimeField()
+    last_seen = models.DateTimeField()
+
+    class Meta:
+        db_table = "privguard_worker_heartbeat"
+
+    def __str__(self) -> str:
+        return self.name

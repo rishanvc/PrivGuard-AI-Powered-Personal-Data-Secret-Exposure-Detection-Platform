@@ -29,3 +29,9 @@ pypdfium2==5.14.0             # BSD-3-Clause / Apache-2.0. PDFium (Chrome's PDF 
                               # Bundles 18 third-party notices, all permissive; the only GPL text
                               # covers ICU's Autoconf build scripts, not the shipped binary. The
                               # notices must accompany any redistributed bundle (Cycle 12).
+
+# --- Detection (Cycle 5) ---
+phonenumberslite==9.0.41      # Apache-2.0. Port of Google's libphonenumber: finds phone numbers in
+                              # text and validates them against each country's numbering plan
+                              # (FR-032). "lite" omits the geocoding, carrier and timezone data
+                              # PrivGuard doesn't use. Pure Python, offline.

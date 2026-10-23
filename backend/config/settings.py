@@ -207,6 +207,31 @@ FILE_UPLOAD_TEMP_DIR = str(TMP_ROOT)
 FILE_UPLOAD_PERMISSIONS = 0o600
 FILE_UPLOAD_DIRECTORY_PERMISSIONS = 0o700
 
+# ---------------------------------------------------------------- scan worker (Cycle 4)
+
+# Reading one file may take at most this long. The isolated child process is
+# then killed and the file marked failed (SRS 15: "bounded processing, timeouts").
+EXTRACTION_TIMEOUT_SECONDS = env.int("EXTRACTION_TIMEOUT_SECONDS", default=120)
+
+# Per-file extraction caps (NFR-003). Reaching one marks the file "partial".
+EXTRACTION_MAX_CHARS = env.int("EXTRACTION_MAX_CHARS", default=20_000_000)
+EXTRACTION_MAX_PAGES = env.int("EXTRACTION_MAX_PAGES", default=2_000)
+EXTRACTION_MAX_CELLS = env.int("EXTRACTION_MAX_CELLS", default=2_000_000)
+
+WORKER_POLL_SECONDS = env.float("WORKER_POLL_SECONDS", default=2.0)  # idle: how often to look for work
+WORKER_HEARTBEAT_SECONDS = 5    # "still alive", written while processing and while idle
+WORKER_ALIVE_SECONDS = 30       # health check: a worker seen this recently is running
+# A scan whose heartbeat is older than this was abandoned by a worker that
+# died; recovery puts it back in the queue. Must comfortably exceed the
+# heartbeat interval.
+WORKER_STALE_SECONDS = env.int("WORKER_STALE_SECONDS", default=120)
+
+# ---------------------------------------------------------------- detection (Cycle 5)
+
+# Phone numbers written without a country code ("98765 43210") are read as
+# numbers of this region (ISO 3166 code). Cycle 5 decision: India (D-029).
+DETECTION_REGION = env("DETECTION_REGION", default="IN").upper()
+
 # ---------------------------------------------------------------- optional components
 
 # FR-027 / Cycle 8. Absence must degrade gracefully (NFR-032).

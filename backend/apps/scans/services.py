@@ -11,7 +11,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Count
+from django.db.models import Count, Sum
 from django.utils import timezone
 
 from privguard_engine.intake import (
@@ -190,21 +190,26 @@ def delete_scan(scan: Scan) -> None:
     reverse order could leave a "deleted" scan whose sensitive files are still
     on disk - the worst outcome for a privacy tool.
     """
-    if scan.status in lifecycle.UNDELETABLE:
-        raise ScanStateError("A scan cannot be deleted while it is processing. Cancel it first.")
+    # The row lock closes a race: without it, a worker could claim the scan
+    # between the status check and the deletion and find its files gone. The
+    # worker claims with SKIP LOCKED, so it simply passes over this row.
+    with transaction.atomic():
+        scan = Scan.objects.select_for_update().get(pk=scan.pk)
+        if scan.status in lifecycle.UNDELETABLE:
+            raise ScanStateError("A scan cannot be deleted while it is processing. Cancel it first.")
 
-    scan_dir = Path(private_upload_storage.path(scan_dir_name(scan.user_id, scan.pk)))
-    try:
-        shutil.rmtree(scan_dir)
-    except FileNotFoundError:
-        pass  # nothing was stored (every file rejected), or a retry after partial success
-    except OSError:
-        logger.exception("Could not remove stored files for scan %s", scan.pk)
-        raise ScanStorageError(
-            "The scan's stored files could not be removed, so the scan was not deleted. "
-            "Another program may have one of them open. Try again shortly."
-        )
-    scan.delete()
+        scan_dir = Path(private_upload_storage.path(scan_dir_name(scan.user_id, scan.pk)))
+        try:
+            shutil.rmtree(scan_dir)
+        except FileNotFoundError:
+            pass  # nothing was stored (every file rejected), or a retry after partial success
+        except OSError:
+            logger.exception("Could not remove stored files for scan %s", scan.pk)
+            raise ScanStorageError(
+                "The scan's stored files could not be removed, so the scan was not deleted. "
+                "Another program may have one of them open. Try again shortly."
+            )
+        scan.delete()
 
 
 # ---------------------------------------------------------------- dashboard
@@ -222,7 +227,10 @@ def dashboard_summary(user) -> dict:
         "scans_by_status": by_status,
         "files_inventoried": files.count(),
         "files_accepted": files.exclude(processing_status__in=NOT_ACCEPTED).count(),
-        "files_scanned": files.filter(processing_status=F.COMPLETED).count(),  # 0 until Cycle 4
-        "total_findings": None,          # detection arrives in Cycle 5
-        "critical_high_findings": None,  # severity arrives in Cycle 7
+        # Finished by the worker - whether or not their text could be read; how
+        # completely each was read is shown per scan (extraction_counts).
+        "files_processed": files.filter(processing_status__in=(F.COMPLETED, F.FAILED)).count(),
+        # SUM skips NULLs, and is NULL when every scan is: "not searched" survives to the dashboard.
+        "total_findings": scans.aggregate(n=Sum("total_findings"))["n"],
+        "critical_high_findings": None,  # severity arrives in Cycle 6
     }
