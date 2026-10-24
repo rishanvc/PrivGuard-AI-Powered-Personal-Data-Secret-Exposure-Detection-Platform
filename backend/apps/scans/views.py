@@ -10,11 +10,14 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.accounts.permissions import IsOwner, OwnedQuerysetMixin
+from apps.core.ocr import ocr_config
 from privguard_engine.intake import supported_extensions
 
-from . import services
-from .models import Scan
+from . import filters, services
+from .models import Finding, Scan
 from .serializers import (
+    FindingDetailSerializer,
+    FindingReviewSerializer,
     FindingSerializer,
     ScanCreateSerializer,
     ScanDetailSerializer,
@@ -109,11 +112,9 @@ class ScanViewSet(
 
     @action(detail=True, methods=["get"])
     def findings(self, request, pk=None):
-        """Most confident first. Search, filters and review arrive in Cycle 7."""
+        """One scan's findings, with the same filters, search and sorting as /api/findings/."""
         scan = self.get_object()  # 404 unless it's the caller's scan
-        queryset = scan.findings.select_related("scanned_file").order_by(
-            "-confidence", "scanned_file__relative_path", "subcategory", "created_at", "id"
-        )
+        queryset = filters.apply(scan.findings.select_related("scanned_file", "scan"), request.query_params)
         paginator = FindingPagination()
         page = paginator.paginate_queryset(queryset, request, view=self)
         return paginator.get_paginated_response(FindingSerializer(page, many=True).data)
@@ -125,8 +126,44 @@ class ScanViewSet(
             "max_file_mb": settings.MAX_UPLOAD_SIZE_MB,
             "max_total_mb": settings.MAX_TOTAL_SCAN_SIZE_MB,
             "max_files": settings.MAX_FILES_PER_SCAN,
-            "supported_extensions": supported_extensions(),
+            "supported_extensions": supported_extensions(ocr=ocr_config() is not None),
         })
+
+
+class FindingViewSet(OwnedQuerysetMixin, mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+    """/api/findings/ - every finding in the caller's scans (FR-083, FR-084, FR-086, FR-087).
+
+    GET  /api/findings/?severity=critical,high&q=deploy   list, filtered (see filters.py)
+    GET  /api/findings/{id}/                              everything about one finding, with its review history
+    PATCH /api/findings/{id}/ {"review_status": "..."}    review it (UC-03): recorded, and the scan rescored
+
+    A finding belongs to whoever owns its scan. Another user's finding is not
+    found (404) - for administrators too (D-009).
+    """
+
+    queryset = Finding.objects.select_related("scanned_file", "scan", "reviewed_by")
+    owner_field = "scan__user"
+    permission_classes = [IsAuthenticated, IsOwner]
+    pagination_class = FindingPagination
+    http_method_names = ["get", "patch", "head", "options"]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        return filters.apply(queryset, self.request.query_params) if self.action == "list" else queryset
+
+    def get_serializer_class(self):
+        return FindingSerializer if self.action == "list" else FindingDetailSerializer
+
+    def perform_create(self, serializer):  # findings are made by scans, never by the API
+        raise NotImplementedError
+
+    def partial_update(self, request, pk=None):
+        finding = self.get_object()  # 404 unless it's the caller's finding
+        serializer = FindingReviewSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        finding = services.review_finding(finding=finding, user=request.user,
+                                          status=serializer.validated_data["review_status"])
+        return Response(FindingDetailSerializer(finding).data)
 
 
 class DashboardView(APIView):

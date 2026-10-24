@@ -3,6 +3,8 @@ import { Route, Routes } from 'react-router-dom'
 import RequireAuth from './auth/RequireAuth'
 import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
+import FindingDetail from './pages/FindingDetail'
+import Findings from './pages/Findings'
 import Login from './pages/Login'
 import NewScan from './pages/NewScan'
 import Placeholder from './pages/Placeholder'
@@ -28,10 +30,8 @@ export default function App() {
         <Route path="scans" element={<Scans />} />
         <Route path="scans/new" element={<NewScan />} />
         <Route path="scans/:scanId" element={<ScanDetail />} />
-        <Route
-          path="findings"
-          element={<Placeholder title="Findings" cycle="5" description="Review detected sensitive information." />}
-        />
+        <Route path="findings" element={<Findings />} />
+        <Route path="findings/:findingId" element={<FindingDetail />} />
         <Route
           path="reports"
           element={<Placeholder title="Reports" cycle="11" description="Generate and export scan reports." />}

@@ -14,19 +14,24 @@ import statistics
 import time
 from collections import Counter, defaultdict
 
-from privguard_engine.detectors import detect_segment
+from privguard_engine.detectors import DetectionConfig, detect_segment
 
 from .detection_corpus import CASES as FIRST_BATCH
-from .detection_corpus import HARDER_CASES
+from .detection_corpus import FINANCIAL_CASES, HARDER_CASES, SECRET_CASES
 
-CASES = FIRST_BATCH + HARDER_CASES
+CASES = FIRST_BATCH + HARDER_CASES + SECRET_CASES + FINANCIAL_CASES
+
+
+def config_for(case) -> DetectionConfig:
+    """What the child would use for this case's file (D-037: rules differ for .env, config and code)."""
+    return DetectionConfig(file_type=case.file_type)
 
 
 def evaluate(cases=CASES):
     counts: dict[str, Counter] = defaultdict(Counter)
     misses, false_alarms = [], []
     for case in cases:
-        found = {(d.type, d.value) for d in detect_segment(case.text, case.location)}
+        found = {(d.type, d.value) for d in detect_segment(case.text, case.location, config_for(case))}
         expected = set(case.expected)
         for kind, value in found & expected:
             counts[kind]["tp"] += 1
@@ -55,7 +60,7 @@ def seconds_per_segment(repeats: int = 5) -> float:
     for _ in range(repeats):
         start = time.perf_counter()
         for case in CASES:
-            detect_segment(case.text, case.location)
+            detect_segment(case.text, case.location, config_for(case))
         timings.append((time.perf_counter() - start) / len(CASES))
     return statistics.median(timings)
 

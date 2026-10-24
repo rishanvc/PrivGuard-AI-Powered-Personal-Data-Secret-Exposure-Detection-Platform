@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 
+import RiskMeter from '../components/RiskMeter'
 import StatusPill from '../components/StatusPill'
 import { apiGet, ApiError, BASE_URL } from '../lib/api'
+import { NOT_ASSESSED, OPEN_STATUSES, REVIEW_STATUSES, SEVERITIES } from '../lib/findings'
 import { formatDateTime } from '../lib/format'
 
 /**
@@ -21,12 +23,148 @@ const COMPONENT_LABELS = {
   ai: 'Local AI',
 }
 
-function MetricCard({ label, value, hint }) {
-  return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4">
+function MetricCard({ label, value, hint, to }) {
+  const body = (
+    <>
       <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
       <p className="mt-1 text-2xl font-semibold text-slate-900">{value ?? '—'}</p>
       {hint && <p className="mt-1 text-xs text-slate-400">{hint}</p>}
+    </>
+  )
+  // A number with nothing behind it (still "—") is not a link.
+  return to && value ? (
+    <Link to={to} className="block rounded-lg border border-slate-200 bg-white p-4 hover:border-slate-400">{body}</Link>
+  ) : (
+    <div className="rounded-lg border border-slate-200 bg-white p-4">{body}</div>
+  )
+}
+
+/**
+ * Open findings per severity (FR-081): one bar per level, value at the tip,
+ * label beside it - colour is never the only way to read a bar. Each row
+ * opens the Findings page filtered to that level.
+ */
+function SeverityBars({ counts }) {
+  const levels = [...Object.keys(SEVERITIES), ...(counts.not_assessed ? ['not_assessed'] : [])]
+  const max = Math.max(1, ...levels.map((level) => counts[level]))
+  return (
+    <ul className="space-y-1">
+      {levels.map((level) => {
+        const meta = SEVERITIES[level] ?? NOT_ASSESSED
+        const n = counts[level]
+        return (
+          <li key={level}>
+            <Link
+              to={`/findings?severity=${level}&status=${OPEN_STATUSES}`}
+              title={`${meta.label}: ${n} open finding${n === 1 ? '' : 's'}. Open the list.`}
+              className="group grid grid-cols-[7rem_1fr] items-center gap-3 rounded-md px-2 py-1 hover:bg-slate-50"
+            >
+              <span className="text-sm text-slate-700">{meta.label}</span>
+              <span className="flex items-center border-l border-slate-300">
+                <span
+                  className={`h-4 rounded-r ${meta.mark} group-hover:opacity-80`}
+                  style={{ width: `calc((100% - 3rem) * ${n / max})` }}
+                />
+                <span className="ml-2 text-sm tabular-nums text-slate-800">{n}</span>
+              </span>
+            </Link>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+/** How many findings a person has looked at (FR-086): a meter, blue on a pale-blue track. */
+function ReviewProgress({ counts }) {
+  const total = Object.values(counts).reduce((sum, n) => sum + n, 0)
+  const reviewed = total - counts.new
+  return (
+    <div className="space-y-2">
+      <div
+        role="meter"
+        aria-valuemin={0}
+        aria-valuemax={total}
+        aria-valuenow={reviewed}
+        aria-label={`${reviewed} of ${total} findings reviewed`}
+        className="h-3 overflow-hidden rounded-full bg-[#cde2fb]"
+      >
+        <div className="h-full rounded-full bg-[#2a78d6]" style={{ width: `${total ? (reviewed / total) * 100 : 0}%` }} />
+      </div>
+      <p className="text-sm text-slate-700">
+        <span className="font-semibold text-slate-900">{reviewed}</span> of {total} reviewed
+        {counts.new > 0 && (
+          <> · <Link to="/findings?status=new" className="text-slate-500 underline hover:text-slate-900">{counts.new} still new</Link></>
+        )}
+      </p>
+      <p className="text-xs text-slate-500">
+        {Object.entries(REVIEW_STATUSES).filter(([status]) => status !== 'new' && counts[status])
+          .map(([status, meta]) => `${counts[status]} ${meta.label.toLowerCase()}`).join(' · ')}
+      </p>
+    </div>
+  )
+}
+
+const CATEGORY_TILES = [
+  ['personal', 'Personal data'],
+  ['secret', 'Secrets'],
+  ['financial', 'Financial data'],
+]
+
+function FindingsOverview({ summary }) {
+  if (summary.total_findings === null) {
+    return (
+      <p className="rounded-lg border border-dashed border-slate-300 bg-white p-6 text-center text-sm text-slate-500">
+        No scan has been searched yet, so there is nothing to chart.
+      </p>
+    )
+  }
+  if (summary.total_findings === 0) {
+    return (
+      <p className="rounded-lg border border-dashed border-slate-300 bg-white p-6 text-center text-sm text-slate-500">
+        No findings in the files that could be read. That is not proof the files are safe - only that no rule matched.
+      </p>
+    )
+  }
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        {CATEGORY_TILES.map(([category, label]) => (
+          <MetricCard
+            key={category}
+            label={label}
+            value={summary.category_counts[category]}
+            hint="Open findings"
+            to={`/findings?category=${category}&status=${OPEN_STATUSES}`}
+          />
+        ))}
+      </div>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="rounded-lg border border-slate-200 bg-white p-4">
+          <h4 className="text-sm font-semibold text-slate-900">Open findings by severity</h4>
+          <p className="mb-3 text-xs text-slate-500">Not counting those reviewed as false positive or resolved.</p>
+          <SeverityBars counts={summary.severity_counts} />
+        </div>
+        <div className="space-y-4">
+          <div className="rounded-lg border border-slate-200 bg-white p-4">
+            <h4 className="mb-3 text-sm font-semibold text-slate-900">Review progress</h4>
+            <ReviewProgress counts={summary.review_counts} />
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-4">
+            <h4 className="mb-3 text-sm font-semibold text-slate-900">Riskiest scans</h4>
+            <ul className="divide-y divide-slate-100">
+              {summary.riskiest_scans.map((scan) => (
+                <li key={scan.id} className="flex items-center justify-between gap-4 py-2">
+                  <Link to={`/scans/${scan.id}`} className="min-w-0 truncate text-sm font-medium text-slate-900 hover:underline">
+                    {scan.name}
+                  </Link>
+                  <RiskMeter score={scan.risk_score} band={scan.risk_band} />
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
@@ -90,10 +228,22 @@ export default function Dashboard() {
               value={s?.total_findings}
               hint={s && s.total_findings === null ? 'No scan searched yet' : 'In scans that were searched'}
             />
-            <MetricCard label="Critical / high" value={s?.critical_high_findings} hint="Severity arrives in Cycle 6" />
+            <MetricCard
+              label="Critical / high"
+              value={s?.critical_high_findings}
+              hint={s && s.critical_high_findings === null ? 'No scan searched yet' : 'Open - fix these first'}
+              to={`/findings?severity=critical,high&status=${OPEN_STATUSES}`}
+            />
           </div>
         )}
       </section>
+
+      {s && (
+        <section>
+          <h3 className="mb-3 text-sm font-semibold text-slate-900">Findings overview</h3>
+          <FindingsOverview summary={s} />
+        </section>
+      )}
 
       <section>
         <div className="mb-3 flex items-center justify-between">

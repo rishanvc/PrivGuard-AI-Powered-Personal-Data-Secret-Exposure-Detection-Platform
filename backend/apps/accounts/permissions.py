@@ -32,6 +32,7 @@ class IsOwner(BasePermission):
     Second line of defence. The first is OwnedQuerysetMixin, which removes
     other users' objects from the queryset so they 404 before this runs.
     Compares <field>_id rather than <field> to avoid loading the related user.
+    The owner may sit behind a relation, as in "scan__user" for a finding (Cycle 7).
     """
 
     message = "You do not have access to this resource."
@@ -40,7 +41,9 @@ class IsOwner(BasePermission):
         user = request.user
         if not (user and user.is_authenticated):
             return False
-        field = getattr(view, "owner_field", "user")
+        *path, field = getattr(view, "owner_field", "user").split("__")
+        for relation in path:
+            obj = getattr(obj, relation, None)
         owner_id = getattr(obj, f"{field}_id", None)
         # The explicit None check matters: an anonymous user's pk is None, so
         # without it an ownerless object would satisfy None == None. This class

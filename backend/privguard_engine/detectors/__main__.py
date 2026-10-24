@@ -14,7 +14,8 @@ import argparse
 import sys
 from pathlib import Path
 
-from ..extractors import extract_file
+from ..extractors import Limits, extract_file
+from ..extractors.ocr import OcrConfig
 from ..intake import Verdict, inspect_file
 from . import TYPE_LABELS, DetectionConfig, FindingCollector
 
@@ -28,21 +29,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("path", type=Path, help="a local file to scan")
     parser.add_argument("--region", default="IN", help="region for phone numbers without a country code (default: IN)")
     parser.add_argument("--max", type=int, default=40, help="findings to print (default: 40)")
+    parser.add_argument("--tesseract", metavar="PATH",
+                        help="tesseract.exe, to read images and scanned PDF pages (Cycle 8); OCR is off without it")
     args = parser.parse_args(argv)
+    ocr = OcrConfig(command=args.tesseract) if args.tesseract else None
 
     if hasattr(sys.stdout, "reconfigure"):  # see privguard_engine.extractors.__main__
         sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
 
     size = args.path.stat().st_size
     with args.path.open("rb") as stream:
-        inspection = inspect_file(args.path.name, stream, size, max_bytes=max(size, 1))
+        inspection = inspect_file(args.path.name, stream, size, max_bytes=max(size, 1), ocr=ocr is not None)
     print(f"{args.path.name}: {inspection.verdict.value} as '{inspection.file_type or 'unknown'}'"
           + (f" - {inspection.reason}" if inspection.reason else ""))
     if inspection.verdict is not Verdict.SUPPORTED:
         return 1
 
-    collector = FindingCollector(DetectionConfig(region=args.region.upper()))
-    result = extract_file(str(args.path), inspection.file_type, sink=collector)
+    collector = FindingCollector(DetectionConfig(region=args.region.upper(), file_type=inspection.file_type))
+    result = extract_file(str(args.path), inspection.file_type, limits=Limits(ocr=ocr), sink=collector)
     print(f"extraction: {result.status.value}" + (f" - {result.reason}" if result.reason else ""))
 
     findings = sorted(collector.findings(), key=lambda f: (-f.confidence, f.type))

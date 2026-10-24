@@ -35,6 +35,19 @@ def label_before(text: str, start: int, phrases: Iterable[str], window: int = 40
     return phrase_in(normalise(text[max(0, start - window):start]), phrases)
 
 
+def label_regex(phrases: Iterable[str], *, space_separated: bool = False) -> re.Pattern:
+    """'Employee ID : value', 'employee_id="value"', '"employee id": "value"' - the
+    label, its separator and any opening quote. The value starts at match.end().
+
+    space_separated also accepts 'UTR 4301...', as bank text messages write it -
+    only for labels distinctive enough that a plain space cannot mislead.
+    """
+    words = sorted(set(phrases), key=len, reverse=True)
+    alternatives = "|".join(re.escape(p).replace(r"\ ", r"[\s_.-]?") for p in words)
+    separator = r"(?:\s*[:=\-–]\s*|\s+)" if space_separated else r"\s*[:=\-–]\s*"
+    return re.compile(rf"(?<![\w])(?P<label>{alternatives})[\"']?{separator}[\"']?", re.IGNORECASE)
+
+
 def header_mentions(location: Mapping, phrases: Iterable[str]) -> str | None:
     """A context phrase anywhere in the column header ('Work Email' mentions 'email')."""
     header = normalise(str(location.get("header") or ""))

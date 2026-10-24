@@ -83,6 +83,11 @@ pnpm-debug.log*
 /tmp/
 /temp/
 
+# Generated demo files in real credential and card formats (D-038). Fake, but
+# secret scanners and GitHub's push protection cannot tell - so they are built
+# locally by samples/make_secrets_finance_demo.py and never committed.
+/samples/secrets-finance-demo/
+
 # Local AI models and caches (large binaries)
 /models/
 *.gguf

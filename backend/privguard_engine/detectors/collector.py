@@ -9,9 +9,10 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Mapping
 
-from .base import PERSONAL, Detection, DetectionConfig, Finding
+from .base import CATEGORY_OF, SECRET_TYPES, Detection, DetectionConfig, Finding
 from .contact import country_code_of
 from .masking import keep_ends, mask_aadhaar, mask_email, mask_name, mask_phone, mask_text, sanitise_preview
+from .secrets import mask_secret
 
 # How each type is masked. Enough to recognise a finding, never enough to reuse it.
 _MASKERS = {
@@ -27,13 +28,26 @@ _MASKERS = {
     # even the length - gives the value away, so these are hidden completely.
     **dict.fromkeys(("gender", "blood_group", "religion_or_caste", "marital_status", "nationality"),
                     lambda d: "****"),
+    # Secrets show only what kind they are - a public prefix, a scheme and host - never their content.
+    **dict.fromkeys(SECRET_TYPES, mask_secret),
+    # Financial values keep their last four digits (FR-045); codes that name a BANK keep the bank part.
+    **dict.fromkeys(("payment_card", "test_payment_card", "bank_account", "transaction_id", "payment_reference"),
+                    lambda d: keep_ends(d.value, end=4)),
+    "card_security_code": lambda d: "***",
+    "iban": lambda d: keep_ends(d.value, start=2, end=4),
+    "gstin": lambda d: keep_ends(d.value, start=2),
+    "ifsc_code": lambda d: keep_ends(d.value, start=4),
+    "swift_code": lambda d: keep_ends(d.value, start=4),
+    "upi_id": lambda d: mask_email(d.value),
 }
 
 # Location keys worth keeping. "header" is deliberately dropped: in a CSV with
 # no header row, the "header" is really the first row of DATA - a real name
 # could otherwise be stored unmasked inside a location (FR-115, NFR-025).
 STORED_LOCATION_KEYS = ("sheet", "cell", "row", "column", "line", "page", "slide", "part", "paragraph",
-                        "kind", "field", "hidden")
+                        "kind", "field", "hidden",
+                        "ocr_box")  # Cycle 8: "left,top,width,height" of an OCR line - Cycle 10 redacts there
+OCR_NOTE = " Read by OCR from an image, which can misread characters."
 # A hostile file can make a match as long as it likes ("Mr " + 10,000 letters).
 # Capping the mask also bounds every preview built around it.
 MAX_MASKED_LENGTH = 100
@@ -154,9 +168,10 @@ class FindingCollector:
     def findings(self) -> list[Finding]:
         return [
             Finding(
-                category=PERSONAL, type=g.best.type, method=g.best.method, confidence=g.best.confidence,
+                category=CATEGORY_OF[g.best.type], type=g.best.type, method=g.best.method, confidence=g.best.confidence,
                 masked_value=g.masked, context=g.preview, location=g.locations[0],
-                more_locations=tuple(g.locations[1:]), occurrences=g.occurrences, explanation=g.best.explanation,
+                more_locations=tuple(g.locations[1:]), occurrences=g.occurrences,
+                explanation=g.best.explanation + (OCR_NOTE if g.locations[0].get("kind") == "ocr" else ""),
             )
             for g in self._groups.values()
         ]

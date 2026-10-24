@@ -29,6 +29,10 @@ export function extractionSummary(stats = {}) {
   if (stats.pages != null) {
     parts.push(count(stats.pages, 'page') + (stats.pages_without_text ? ` (${stats.pages_without_text} without text)` : ''))
   }
+  // Cycle 8: what OCR read - scanned pages, or an image's lines.
+  if (stats.ocr_pages) parts.push(`${count(stats.ocr_pages, 'page')} read by OCR`)
+  if (stats.image_width != null) parts.push(`${stats.image_width} x ${stats.image_height} px image`)
+  if (stats.ocr_lines != null) parts.push(`${count(stats.ocr_lines, 'line')} read by OCR`)
   if (stats.slides != null) {
     parts.push(count(stats.slides, 'slide') + (stats.slides_with_notes ? ` (${stats.slides_with_notes} with notes)` : ''))
   }

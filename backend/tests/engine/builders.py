@@ -305,3 +305,83 @@ def pdf_bytes(pages: list[str], *, info: dict[str, str] | None = None) -> bytes:
         out.write(b"%010d 00000 n \n" % offset)
     out.write(f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R{info_ref} >>\nstartxref\n{xref}\n%%EOF\n".encode())
     return out.getvalue()
+
+
+# ---------------------------------------------------------------- images and scans (Cycle 8)
+
+def _render(text: str, dpi: int = 150):
+    """Draw text into a one-page PDF and render it to a grayscale bitmap."""
+    import pypdfium2 as pdfium
+
+    document = pdfium.PdfDocument(pdf_bytes([text]))
+    page = document[0]
+    bitmap = page.render(scale=dpi / 72, grayscale=True)
+    page.close()
+    return document, bitmap
+
+
+def png_bytes(text: str, *, dpi: int = 150) -> bytes:
+    """A real PNG image showing `text` - built with zlib alone, no image library.
+
+    A PNG is a signature, then chunks: IHDR (size and pixel format), IDAT (the
+    rows, each prefixed with a filter byte, compressed with zlib) and IEND.
+    """
+    import struct
+    import zlib
+
+    document, bitmap = _render(text, dpi)
+    try:
+        raw = bytes(bitmap.buffer)
+        rows = b"".join(b"\x00" + raw[y * bitmap.stride: y * bitmap.stride + bitmap.width] for y in range(bitmap.height))
+        width, height = bitmap.width, bitmap.height
+    finally:
+        bitmap.close()
+        document.close()
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0)  # 8-bit grayscale, no interlace
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(rows, 9)) + chunk(b"IEND", b"")
+
+
+def png_header_only(width: int, height: int) -> bytes:
+    """The first bytes of a PNG claiming a size - enough to test the size check, with no pixels."""
+    import struct
+
+    return b"\x89PNG\r\n\x1a\n" + struct.pack(">I", 13) + b"IHDR" + struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0)
+
+
+def jpeg_header_only(width: int, height: int) -> bytes:
+    """A JPEG's opening markers up to its frame header: enough to read its size, with no image data."""
+    import struct
+
+    app0 = b"\xff\xe0" + struct.pack(">H", 16) + b"JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
+    sof0 = b"\xff\xc0" + struct.pack(">HBHHB", 11, 8, height, width, 1) + b"\x01\x11\x00"
+    return b"\xff\xd8" + app0 + sof0
+
+
+def scanned_pdf_bytes(pages: list[str], *, dpi: int = 150) -> bytes:
+    """A PDF whose pages are only PICTURES of text - no text layer, as a scanner makes."""
+    import pypdfium2 as pdfium
+
+    scanned = pdfium.PdfDocument.new()
+    try:
+        for text in pages:
+            document, bitmap = _render(text, dpi)
+            try:
+                page = scanned.new_page(612, 792)
+                image = pdfium.PdfImage.new(scanned)
+                image.set_bitmap(bitmap)
+                image.set_matrix(pdfium.PdfMatrix().scale(612, 792))  # stretch the picture over the page
+                page.insert_obj(image)
+                page.gen_content()
+                page.close()
+            finally:
+                bitmap.close()
+                document.close()
+        out = io.BytesIO()
+        scanned.save(out)
+        return out.getvalue()
+    finally:
+        scanned.close()

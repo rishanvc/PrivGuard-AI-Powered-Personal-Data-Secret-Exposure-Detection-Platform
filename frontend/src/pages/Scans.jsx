@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 
+import RiskMeter from '../components/RiskMeter'
 import StatusPill from '../components/StatusPill'
 import { apiGet, ApiError } from '../lib/api'
 import { formatDateTime } from '../lib/format'
@@ -75,6 +76,7 @@ export default function Scans() {
                 <th className="px-4 py-2">Name</th>
                 <th className="px-4 py-2">Type</th>
                 <th className="px-4 py-2 text-right">Files</th>
+                <th className="px-4 py-2">Risk</th>
                 <th className="px-4 py-2">Status</th>
                 <th className="px-4 py-2">Created</th>
               </tr>
@@ -89,6 +91,9 @@ export default function Scans() {
                   </td>
                   <td className="px-4 py-3 text-slate-600">{TYPE_LABELS[scan.scan_type] ?? scan.scan_type}</td>
                   <td className="px-4 py-3 text-right text-slate-600">{scan.total_files}</td>
+                  <td className="px-4 py-3">
+                    <RiskMeter score={scan.risk_score} band={scan.risk_band} />
+                  </td>
                   <td className="px-4 py-3">
                     <StatusPill status={scan.status}>{scan.status_display}</StatusPill>
                   </td>

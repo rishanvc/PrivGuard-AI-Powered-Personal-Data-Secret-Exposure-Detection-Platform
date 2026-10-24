@@ -2,9 +2,12 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 
 import FindingsTable from '../components/FindingsTable'
+import RiskMeter from '../components/RiskMeter'
+import SeverityBadge from '../components/SeverityBadge'
 import StatusPill from '../components/StatusPill'
 import { apiDelete, apiGet, apiPost, ApiError } from '../lib/api'
 import { EXTRACTION_LABELS, extractionSummary } from '../lib/extraction'
+import { SEVERITIES } from '../lib/findings'
 import { formatBytes, formatDateTime } from '../lib/format'
 
 /**
@@ -43,6 +46,26 @@ function Banner({ tone, children }) {
     neutral: 'border-slate-200 bg-slate-50 text-slate-700',
   }
   return <div className={`rounded-md border px-4 py-3 text-sm ${tones[tone]}`}>{children}</div>
+}
+
+/** FR-075 to FR-077, FR-080: the score, every factor behind it, and what it cannot say. */
+function RiskCard({ risk }) {
+  return (
+    <section className="space-y-3 rounded-lg border border-slate-200 bg-white p-5">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <h3 className="text-sm font-semibold text-slate-900">Risk score</h3>
+        <RiskMeter score={risk.score} band={risk.band} size="lg" />
+      </div>
+      <ul className="list-inside list-disc space-y-0.5 text-sm text-slate-700">
+        {risk.factors.map((factor) => <li key={factor}>{factor}</li>)}
+      </ul>
+      <p className="text-xs text-slate-500">
+        {risk.limitation} Bands:{' '}
+        {[...risk.bands].reverse().map((b) => `${b.label} from ${b.from}`).join(', ')}. Scoring policy version{' '}
+        {risk.policy_version}.
+      </p>
+    </section>
+  )
 }
 
 function FileStatus({ file }) {
@@ -307,6 +330,8 @@ export default function ScanDetail() {
         <Banner tone="warn">None of these files can be processed, so there is nothing to start. See the reasons below.</Banner>
       )}
 
+      {scan.risk && <RiskCard risk={scan.risk} />}
+
       <section className="space-y-3">
         <h3 className="text-sm font-semibold text-slate-900">Intake</h3>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -327,7 +352,7 @@ export default function ScanDetail() {
             <Card
               label="Findings"
               value={scan.total_findings ?? '—'}
-              hint={scan.total_findings === null ? 'Not searched yet' : 'Personal data, masked'}
+              hint={scan.total_findings === null ? 'Not searched yet' : 'Personal, secret and financial'}
             />
           </div>
         </section>
@@ -339,8 +364,28 @@ export default function ScanDetail() {
             <h3 className="text-sm font-semibold text-slate-900">Findings</h3>
             <p className="text-xs text-slate-500">
               Values are masked. Only the masked form was ever stored.
+              {scan.total_findings > 0 && (
+                <>
+                  {' '}
+                  <Link to={`/findings?scan=${encodeURIComponent(scanId)}`} className="font-medium text-slate-700 hover:underline">
+                    Search and filter these →
+                  </Link>
+                </>
+              )}
             </p>
           </div>
+          {scan.total_findings > 0 && (
+            <div className="flex flex-wrap items-center gap-3">
+              {[...Object.keys(SEVERITIES), 'not_assessed']
+                .filter((level) => scan.severity_counts[level] > 0)
+                .map((level) => (
+                  <span key={level} className="flex items-center gap-1.5 text-sm text-slate-700">
+                    <SeverityBadge severity={level === 'not_assessed' ? null : level} />
+                    <span className="font-semibold text-slate-900">{scan.severity_counts[level]}</span>
+                  </span>
+                ))}
+            </div>
+          )}
           {scan.finding_counts.length > 0 && (
             <div className="flex flex-wrap gap-2">
               {scan.finding_counts.map((row) => (
@@ -352,11 +397,16 @@ export default function ScanDetail() {
           )}
           {scan.total_findings === 0 ? (
             <Banner tone="neutral">
-              No personal data was found in the files that could be read.
+              Nothing sensitive was found in the files that could be read. That is not proof the files are safe -
+              only that no rule matched.
               {ACTIVE.has(scan.status) && ' The scan is still running.'}
             </Banner>
           ) : (
-            <FindingsTable scanId={scanId} totalFindings={scan.total_findings} />
+            <FindingsTable
+              key={scanId}
+              filters={`scan=${encodeURIComponent(scanId)}`}
+              refreshKey={scan.total_findings}
+            />
           )}
         </section>
       )}

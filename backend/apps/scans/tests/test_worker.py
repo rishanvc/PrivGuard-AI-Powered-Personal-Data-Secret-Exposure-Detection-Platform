@@ -15,6 +15,7 @@ from django.test import SimpleTestCase
 from django.urls import reverse
 from django.utils import timezone
 
+from apps.audit.models import AuditLog
 from apps.core.health import collect_health
 from apps.scans import services, worker
 from apps.scans.models import Finding, Scan, ScannedFile, WorkerHeartbeat
@@ -22,7 +23,8 @@ from privguard_engine.detectors import DETECTION_VERSION
 from privguard_engine.isolation import (
     CANCELLED, CRASHED, DONE, ERROR, TIMEOUT, EngineError, Outcome, decode_reply, encode_reply, perform,
 )
-from tests.engine import builders
+from privguard_engine.risk import RISK_POLICY_VERSION, SEVERITY_POLICY_VERSION
+from tests.engine import builders, secret_fixtures
 
 from .base import EXE, ScanTestBase
 
@@ -183,12 +185,20 @@ class ProcessingTests(WorkerTestBase):
         # contacts.csv - two emails, two phones. (The names in the CSV have no label: not found.)
         self.assertEqual(Finding.objects.filter(scan=scan).count(), 6)
 
+        # Cycle 7: reviewing writes to the audit log - a table that must stay clean too.
+        for finding in Finding.objects.filter(scan=scan):
+            self.client.patch(reverse("finding-detail", kwargs={"pk": finding.pk}),
+                              {"review_status": "confirmed"}, format="json")
+        self.assertEqual(AuditLog.objects.count(), 6)
+
         forbidden = [marker, "Rahul Verma", "rahul.verma", "priya.sharma", "98765 43210", "98765 43211", "98765 43212"]
-        for row in [*Scan.objects.all(), *ScannedFile.objects.all(), *Finding.objects.all()]:
+        for row in [*Scan.objects.all(), *ScannedFile.objects.all(), *Finding.objects.all(), *AuditLog.objects.all()]:
             values = " ".join(str(v) for k, v in vars(row).items() if k != "_state")
             for text in forbidden:
                 self.assertNotIn(text, values, f"{text!r} found in a {type(row).__name__} row")
-        for url in (self.url("scan-detail", scan), self.url("scan-files", scan), self.url("scan-findings", scan)):
+        one_finding = reverse("finding-detail", kwargs={"pk": Finding.objects.filter(scan=scan).first().pk})
+        for url in (self.url("scan-detail", scan), self.url("scan-files", scan), self.url("scan-findings", scan),
+                    reverse("finding-list"), one_finding, reverse("dashboard")):
             body = self.client.get(url).content.decode()
             for text in forbidden:
                 self.assertNotIn(text, body, f"{text!r} found in {url}")
@@ -217,8 +227,12 @@ class DetectionTests(WorkerTestBase):
         self.assertEqual(email.source_location, {"row": 2, "column": 3, "line": 2})  # no "header" (D-033)
         self.assertEqual(email.other_locations, [{"row": 3, "column": 3, "line": 3}])
         self.assertEqual((email.category, email.detection_method, email.confidence), ("personal", "pattern", 0.95))
-        self.assertEqual((email.review_status, email.severity, email.risk_score), ("new", None, None))
+        # Risk 23 = Low base 20 x confidence factor 0.98 (0.6 + 0.4 x 0.95) + 3 for appearing twice, rounded.
+        self.assertEqual((email.review_status, email.severity, email.risk_score), ("new", "low", 23))
+        self.assertTrue(email.severity_reason.startswith("Low. Email address:"))
+        self.assertIn("BCC", email.remediation)
         self.assertEqual(email.detection_version, DETECTION_VERSION)
+        self.assertEqual(scan.configuration["severity_policy_version"], SEVERITY_POLICY_VERSION)
 
         files = self.files(scan)
         self.assertEqual(files["staff.csv"].detection_stats["findings"], 5)
@@ -226,6 +240,30 @@ class DetectionTests(WorkerTestBase):
         self.assertEqual(scan.configuration["detection_version"], DETECTION_VERSION)
         self.assertEqual(scan.configuration["phone_region"], "IN")
         self.assertIn("aadhaar", scan.configuration["detectors"])
+
+    def test_the_scan_is_scored_from_its_riskiest_finding(self):
+        scan = self.queued([("staff.csv", STAFF_CSV)])
+        self.claim_and_process()
+        scan.refresh_from_db()
+        # Riskiest: a phone number, Medium base 45 x 0.98 = 44. No other finding reaches 60: no bonus.
+        self.assertEqual(scan.risk_score, 44)
+        self.assertEqual(scan.configuration["risk_policy_version"], RISK_POLICY_VERSION)
+        risk = self.client.get(self.url("scan-detail", scan)).data["risk"]
+        self.assertEqual((risk["score"], risk["band"], risk["band_label"]), (44, "high", "High"))
+        self.assertEqual(risk["factors"], ["Riskiest finding: Phone number in staff.csv (44)"])
+        self.assertIn("not proof that the files are safe or unsafe", risk["limitation"])  # FR-080
+        # FR-077's bands travel with the score, so no page repeats the thresholds.
+        self.assertEqual([(b["from"], b["band"]) for b in risk["bands"]],
+                         [(70, "critical"), (40, "high"), (20, "moderate"), (0, "low")])
+        listed, = self.client.get(reverse("scan-list")).data["results"]
+        self.assertEqual((listed["risk_score"], listed["risk_band"]), (44, "high"))
+
+    def test_an_unsearched_scan_has_no_risk_score(self):
+        scan = self.queued([("report.pdf", b"%PDF-1.4 passes intake, but is not a real PDF")])
+        self.claim_and_process()
+        scan.refresh_from_db()
+        self.assertIsNone(scan.risk_score)  # nothing was read: no score, never 0
+        self.assertIsNone(self.client.get(self.url("scan-detail", scan)).data["risk"])
 
     def test_a_file_nobody_could_read_was_not_searched(self):
         scan = self.queued([("report.pdf", b"%PDF-1.4 passes intake, but is not a real PDF")])
@@ -423,13 +461,12 @@ class FindingsApiTests(WorkerTestBase):
         self.scan = self.queued([("staff.csv", STAFF_CSV), ("notes.txt", b"synthetic notes\n")])
         self.claim_and_process()
 
-    def test_findings_are_listed_most_confident_first_with_masked_values(self):
+    def test_findings_are_listed_most_serious_first_with_masked_values(self):
         response = self.client.get(self.url("scan-findings", self.scan))
         self.assertEqual(response.status_code, 200)
         rows = response.data["results"]
         self.assertEqual(response.data["count"], 5)
-        confidences = [row["confidence"] for row in rows]
-        self.assertEqual(confidences, sorted(confidences, reverse=True))
+        self.assertEqual([row["severity"] for row in rows], ["medium", "medium", "low", "low", "low"])  # phones first
 
         email = next(row for row in rows if row["subcategory"] == "email_address")
         self.assertEqual(email["subcategory_display"], "Email address")
@@ -437,7 +474,36 @@ class FindingsApiTests(WorkerTestBase):
         self.assertEqual(email["file_path"], "staff.csv")
         self.assertEqual(email["occurrences"], 2)
         self.assertEqual(email["review_status_display"], "New")
-        self.assertIsNone(email["severity"])
+        self.assertEqual(email["severity_display"], "Low")
+        self.assertIn("Email address", email["severity_reason"])
+
+    def test_findings_can_be_sorted_four_ways(self):
+        def rows(ordering):
+            return self.client.get(self.url("scan-findings", self.scan) + f"?ordering={ordering}").data["results"]
+
+        confidences = [row["confidence"] for row in rows("confidence")]
+        self.assertEqual(confidences, sorted(confidences, reverse=True))
+        self.assertEqual([row["category"] for row in rows("category")], ["personal"] * 5)
+        self.assertEqual([row["file_path"] for row in rows("file")], ["staff.csv"] * 5)
+        refused = self.client.get(self.url("scan-findings", self.scan) + "?ordering=severity;DROP")
+        self.assertEqual(refused.status_code, 400)
+
+    def test_scan_detail_counts_findings_by_severity(self):
+        counts = self.client.get(self.url("scan-detail", self.scan)).data["severity_counts"]
+        self.assertEqual(counts, {"critical": 0, "high": 0, "medium": 2, "low": 3, "informational": 0,
+                                  "not_assessed": 0})
+
+    def test_findings_found_before_severity_existed_are_not_assessed_and_sort_last(self):
+        Finding.objects.filter(scan=self.scan, subcategory="phone_number").update(severity=None, severity_reason="")
+        self.assertEqual(self.client.get(self.url("scan-detail", self.scan)).data["severity_counts"]["not_assessed"], 2)
+        rows = self.client.get(self.url("scan-findings", self.scan)).data["results"]
+        self.assertEqual([row["severity"] for row in rows][-2:], [None, None])
+
+    def test_the_dashboard_counts_critical_and_high_findings(self):
+        self.assertEqual(self.client.get(reverse("dashboard")).data["critical_high_findings"], 0)  # looked: none
+        self.queued([("app.env", f"DB_PASSWORD={secret_fixtures.rand(16)}\n".encode())])
+        self.claim_and_process()
+        self.assertEqual(self.client.get(reverse("dashboard")).data["critical_high_findings"], 1)  # a password: high
 
     def test_scan_detail_counts_findings_by_type(self):
         detail = self.client.get(self.url("scan-detail", self.scan)).data

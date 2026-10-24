@@ -26,6 +26,7 @@ from .base import (
     run_extractor,
 )
 from .delimited import extract_delimited
+from .image import extract_image
 from .ooxml import extract_docx, extract_pptx
 from .pdf import extract_pdf
 from .spreadsheet import extract_xlsx
@@ -39,6 +40,8 @@ EXTRACTORS = {
     "docx": extract_docx,
     "pptx": extract_pptx,
     "pdf": extract_pdf,
+    # Cycle 8: read by OCR when it is on; otherwise reported as not supported.
+    **dict.fromkeys(("png", "jpeg"), extract_image),
 }
 
 

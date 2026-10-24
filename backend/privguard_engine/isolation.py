@@ -27,10 +27,10 @@ import signal
 import time
 import traceback
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 
 from .detectors import TYPE_LABELS, DetectionConfig, Finding, FindingCollector
-from .detectors.base import CHECKSUM, CONTEXT, PATTERN, PERSONAL, VALIDATED
+from .detectors.base import CATEGORY_OF, CHECKSUM, CONTEXT, ENTROPY, PATTERN, VALIDATED
 from .detectors.collector import STORED_LOCATION_KEYS
 from .extractors import ExtractionResult, ExtractionStatus, Limits, extract_file
 
@@ -107,7 +107,8 @@ def perform(job: Job) -> JobResult:
     """One job, start to finish. Raw values exist only inside this function's collector."""
     if job.detection is None:
         return JobResult(extract_file(job.path, job.file_type, limits=job.limits))
-    collector = FindingCollector(job.detection, max_findings=MAX_FINDINGS_PER_FILE)
+    config = replace(job.detection, file_type=job.file_type)  # rules differ for .env, config and code
+    collector = FindingCollector(config, max_findings=MAX_FINDINGS_PER_FILE)
     extraction = extract_file(job.path, job.file_type, limits=job.limits, sink=collector)
     return JobResult(extraction, tuple(collector.findings()), collector.stats())
 
@@ -156,7 +157,7 @@ class ProtocolError(Exception):
     """A reply no genuine child would send."""
 
 
-_METHODS = frozenset({PATTERN, VALIDATED, CHECKSUM, CONTEXT})
+_METHODS = frozenset({PATTERN, VALIDATED, CHECKSUM, CONTEXT, ENTROPY})
 
 
 def _check(condition: bool) -> None:
@@ -202,7 +203,8 @@ def _finding(value) -> Finding:
     _check(isinstance(more, list) and len(more) <= 50)
     confidence = value.get("confidence")
     _check(type(confidence) is float and 0.0 <= confidence <= 1.0)
-    _check(value.get("category") == PERSONAL and value.get("type") in TYPE_LABELS and value.get("method") in _METHODS)
+    _check(value.get("type") in TYPE_LABELS and value.get("category") == CATEGORY_OF[value["type"]])
+    _check(value.get("method") in _METHODS)
     _check(_count(value.get("occurrences")) >= 1)
     return Finding(
         category=value["category"], type=value["type"], method=value["method"], confidence=confidence,

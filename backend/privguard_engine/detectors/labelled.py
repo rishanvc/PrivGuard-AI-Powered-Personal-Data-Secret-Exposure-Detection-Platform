@@ -13,7 +13,7 @@ import datetime
 import re
 
 from .base import CONTEXT, Detection, DetectionConfig
-from .context import header_is, header_mentions, label_before, normalise
+from .context import header_is, header_mentions, label_before, label_regex, normalise
 
 # ------------------------------------------------------------------ shared pieces
 
@@ -22,13 +22,6 @@ _WORD = rf"{_LETTERS}+(?:['’-]{_LETTERS}+)*"           # O'Brien, Anne-Marie
 _CAPITALISED = rf"[A-Z]{_LETTERS}*(?:['’-]{_LETTERS}+)*"
 _HONORIFICS = r"(?:Mr|Mrs|Ms|Miss|Dr|Prof|Shri|Sri|Smt|Kumari|Kum)"
 _PLACEHOLDERS = frozenset({"n a", "na", "none", "null", "nil", "unknown", "test", "tbd", "tba", "not applicable", "x", "xx", "xxx", "-", "--"})
-
-
-def _label_regex(phrases) -> re.Pattern:
-    """'Employee ID : value', 'employee_id="value"', '"employee id": "value"'."""
-    words = sorted({p for p in phrases}, key=len, reverse=True)
-    alternatives = "|".join(re.escape(p).replace(r"\ ", r"[\s_.-]?") for p in words)
-    return re.compile(rf"(?<![\w])(?P<label>{alternatives})[\"']?\s*[:=\-–]\s*[\"']?", re.IGNORECASE)
 
 
 def _is_placeholder(value: str) -> bool:
@@ -125,7 +118,7 @@ _FIELD_WORDS = frozenset({
     "designation", "role", "status", "branch", "customer", "policy", "claim", "ticket", "item", "qty", "price",
 })
 
-_NAME_LABEL = _label_regex(_NAME_COLUMNS)
+_NAME_LABEL = label_regex(_NAME_COLUMNS)
 _NAME_AFTER_LABEL = re.compile(rf"(?:{_HONORIFICS}\.?\s+)?(?P<name>{_WORD}(?:[ ]{_WORD}){{0,4}})")
 _SALUTATION = re.compile(rf"\bDear\s+(?:{_HONORIFICS}\.?\s+)?(?P<name>{_CAPITALISED}(?:\s{_CAPITALISED}){{0,3}})")
 _TITLED = re.compile(rf"(?<!\w){_HONORIFICS}\.?\s+(?P<name>{_CAPITALISED}(?:\s{_CAPITALISED}){{0,3}})")
@@ -229,7 +222,7 @@ _RECORD_FIELDS = {
 }
 _NEEDS_DIGIT = frozenset({"employee_id", "passport_number", "voter_id", "driving_licence"})
 _SPECIAL_CATEGORY = frozenset({"religion_or_caste"})
-_RECORD_LABELS = {field: _label_regex(phrases) for field, phrases in _RECORD_FIELDS.items()}
+_RECORD_LABELS = {field: label_regex(phrases) for field, phrases in _RECORD_FIELDS.items()}
 _RECORD_VALUE = re.compile(r"(?P<value>[^\s,;|\"']{1,40}(?: [^\s,;|\"':]{1,40}){0,2})")
 
 

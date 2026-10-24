@@ -163,3 +163,4 @@ class DashboardTests(ScanTestBase):
         self.assertEqual(data["files_accepted"], 3)
         self.assertEqual(data["files_processed"], 0)  # nothing processed until a worker runs
         self.assertIsNone(data["total_findings"])     # null, not 0: no scan has been searched yet
+        self.assertIsNone(data["critical_high_findings"])  # likewise: "0 critical" would claim it looked

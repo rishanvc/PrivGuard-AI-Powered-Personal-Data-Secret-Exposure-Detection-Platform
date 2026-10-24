@@ -55,7 +55,7 @@ FILES = {
     # Every line resembles personal data, and none of it is. Expected: no findings.
     "lookalikes.txt": (
         "Invoice 9876543210 paid in full\n"
-        "Card 4111 1111 1111 1111\n"
+        "Card 4111 1111 1111 1112\n"  # a published test card with one digit changed: fails Luhn
         "ISBN 978-0-306-40615-7\n"
         "Product code ABCDE1234F\n"
         "Use logo@2x.png on retina screens\n"

@@ -13,11 +13,14 @@ PATTERN = "pattern"
 VALIDATED = "pattern + validation"
 CHECKSUM = "pattern + checksum"
 CONTEXT = "context"
+ENTROPY = "entropy heuristic"  # FR-054: randomness alone - the weakest evidence
 
 PERSONAL = "personal"
+SECRET = "secret"
+FINANCIAL = "financial"
 
-# type -> human label. Category is "personal" for everything in Cycle 5.
-TYPE_LABELS = {
+# type -> human label.
+PERSONAL_TYPES = {
     "email_address": "Email address",
     "phone_number": "Phone number",
     "aadhaar_number": "Aadhaar number",
@@ -35,6 +38,36 @@ TYPE_LABELS = {
     "religion_or_caste": "Religion or caste",
     "marital_status": "Marital status",
     "blood_group": "Blood group",
+}
+SECRET_TYPES = {  # Cycle 6
+    "private_key": "Private key",
+    "cloud_credential": "Cloud credential",
+    "api_token": "API key or token",
+    "test_api_token": "API key (test mode or example)",
+    "jwt": "JSON Web Token",
+    "password": "Password",
+    "secret_assignment": "Secret in configuration",
+    "connection_string": "Credentials in a connection string",
+    "high_entropy_secret": "Possible secret (random-looking value)",
+}
+FINANCIAL_TYPES = {  # Cycle 6
+    "payment_card": "Payment card number",
+    "test_payment_card": "Payment card (published test number)",
+    "card_security_code": "Card security code (CVV)",
+    "bank_account": "Bank account number",
+    "ifsc_code": "IFSC code",
+    "upi_id": "UPI ID",
+    "gstin": "GSTIN",
+    "iban": "IBAN",
+    "swift_code": "SWIFT/BIC code",
+    "transaction_id": "Transaction ID",
+    "payment_reference": "Payment reference",
+}
+TYPE_LABELS = {**PERSONAL_TYPES, **SECRET_TYPES, **FINANCIAL_TYPES}
+CATEGORY_OF = {
+    **dict.fromkeys(PERSONAL_TYPES, PERSONAL),
+    **dict.fromkeys(SECRET_TYPES, SECRET),
+    **dict.fromkeys(FINANCIAL_TYPES, FINANCIAL),
 }
 
 
@@ -79,6 +112,10 @@ class DetectionConfig:
     region: str = "IN"
     # Detector names to run; None runs them all.
     enabled: frozenset[str] | None = None
+    # The file's type from intake ("env", "config", "code", "text"...), set per
+    # file by the child. "PASSWORD=abc" is a value in a .env file, but in code
+    # an unquoted right-hand side is an expression, not a secret.
+    file_type: str = ""
 
 
 Detector = Callable[[str, Mapping, DetectionConfig], Iterable[Detection]]

@@ -19,7 +19,7 @@ from typing import BinaryIO
 
 # Bump when classification rules change, so each scan records which rules
 # inventoried it (kept in Scan.configuration; reported per FR-108).
-INTAKE_VERSION = 2  # 2: PPTX became supported (Cycle 4)
+INTAKE_VERSION = 3  # 2: PPTX became supported (Cycle 4); 3: PNG and JPEG while OCR is on (Cycle 8)
 
 SNIFF_BYTES = 8192
 MAX_OOXML_PARTS = 10_000
@@ -69,7 +69,7 @@ _WIDE_BOMS = (b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff", b"\xff\xfe", b"\xfe\xff"
 # ------------------------------------------------------------------ binary formats
 
 _ZIP = b"PK\x03\x04"
-_NO_OCR_YET = "Image text extraction (OCR) is not available yet."
+_OCR_OFF = "Text in images needs OCR, which is turned off on this server."
 
 
 @dataclass(frozen=True)
@@ -81,6 +81,7 @@ class _BinaryFormat:
     unsupported_reason: str = ""
     ooxml_part: str | None = None  # part that must exist inside an Office Open XML file
     search_window: int = 0         # >0: signature may appear anywhere in the first N bytes
+    needs_ocr: bool = False        # supported only while OCR is on (Cycle 8)
 
 
 _BINARY: dict[str, _BinaryFormat] = {
@@ -89,11 +90,11 @@ _BINARY: dict[str, _BinaryFormat] = {
     "docx": _BinaryFormat("docx", "Word document", (_ZIP,), True, ooxml_part="word/document.xml"),
     "xlsx": _BinaryFormat("xlsx", "Excel workbook", (_ZIP,), True, ooxml_part="xl/workbook.xml"),
     "pptx": _BinaryFormat("pptx", "PowerPoint presentation", (_ZIP,), True, ooxml_part="ppt/presentation.xml"),
-    # Recognised, but not processable yet. Flipping `supported` turns on the
-    # signature check below with no other change (OCR arrives in Cycle 8).
-    "png": _BinaryFormat("png", "PNG image", (b"\x89PNG\r\n\x1a\n",), False, _NO_OCR_YET),
-    "jpg": _BinaryFormat("jpeg", "JPEG image", (b"\xff\xd8\xff",), False, _NO_OCR_YET),
-    "jpeg": _BinaryFormat("jpeg", "JPEG image", (b"\xff\xd8\xff",), False, _NO_OCR_YET),
+    # Read by OCR (Cycle 8) - so supported only while OCR is on. The signature
+    # check below still decides whether a ".png" really is a PNG.
+    "png": _BinaryFormat("png", "PNG image", (b"\x89PNG\r\n\x1a\n",), False, _OCR_OFF, needs_ocr=True),
+    "jpg": _BinaryFormat("jpeg", "JPEG image", (b"\xff\xd8\xff",), False, _OCR_OFF, needs_ocr=True),
+    "jpeg": _BinaryFormat("jpeg", "JPEG image", (b"\xff\xd8\xff",), False, _OCR_OFF, needs_ocr=True),
 }
 
 _ARCHIVES = frozenset({"zip", "tar", "gz", "tgz", "bz2", "xz", "7z", "rar"})
@@ -117,8 +118,9 @@ _CONTENT_HINTS: tuple[tuple[bytes, str], ...] = (
 
 # ------------------------------------------------------------------ public API
 
-def inspect_file(name: str, stream: BinaryIO, size: int, max_bytes: int) -> Inspection:
+def inspect_file(name: str, stream: BinaryIO, size: int, max_bytes: int, *, ocr: bool = False) -> Inspection:
     """Classify one file. `name` should already be sanitised (see names.py).
+    `ocr`: whether this server can read images (Cycle 8).
 
     Reads at most SNIFF_BYTES, plus the ZIP table of contents for Office files.
     Never decompresses anything. Leaves the stream positioned at 0.
@@ -133,7 +135,7 @@ def inspect_file(name: str, stream: BinaryIO, size: int, max_bytes: int) -> Insp
         return Inspection(Verdict.UNSUPPORTED, "archive", _ARCHIVE_REASON)
 
     fmt = _BINARY.get(ext)
-    if fmt is not None and not fmt.supported:
+    if fmt is not None and not fmt.supported and not (ocr and fmt.needs_ocr):
         return Inspection(Verdict.UNSUPPORTED, fmt.file_type, fmt.unsupported_reason)
 
     try:
@@ -158,9 +160,9 @@ def inspect_file(name: str, stream: BinaryIO, size: int, max_bytes: int) -> Insp
         stream.seek(0)
 
 
-def supported_extensions() -> list[str]:
+def supported_extensions(*, ocr: bool = False) -> list[str]:
     """Extensions PrivGuard can process (plus .env* and extensionless text files)."""
-    binary = {ext for ext, fmt in _BINARY.items() if fmt.supported}
+    binary = {ext for ext, fmt in _BINARY.items() if fmt.supported or (ocr and fmt.needs_ocr)}
     return sorted(set(TEXT_EXTENSIONS) | binary)
 
 

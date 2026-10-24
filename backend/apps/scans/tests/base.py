@@ -40,7 +40,8 @@ class ScanTestBase(APITestCase):
     def setUp(self):
         self.upload_root = Path(tempfile.mkdtemp(prefix="privguard-test-"))
         self.addCleanup(shutil.rmtree, self.upload_root, True)
-        override = override_settings(UPLOAD_ROOT=self.upload_root)
+        # OCR off unless a test turns it on: results must not depend on the developer's .env.
+        override = override_settings(UPLOAD_ROOT=self.upload_root, OCR_ENABLED=False)
         override.enable()
         self.addCleanup(override.disable)
 

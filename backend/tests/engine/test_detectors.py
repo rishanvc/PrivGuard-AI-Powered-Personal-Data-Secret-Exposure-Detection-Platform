@@ -104,7 +104,8 @@ class RuleTests(unittest.TestCase):
         self.assertEqual(only(f"Identity verified with {good} on file").confidence, 0.8)  # grouping alone
         self.assertEqual(found(f"Order reference {aadhaar('56789012345', '')}"), [])     # bare and unlabelled
         self.assertEqual(found(f"Aadhaar: {wrong_checksum('23456789012')}"), [])
-        self.assertEqual(found("Card 4111 1111 1111 1111"), [])                          # not inside a longer number
+        # Never an Aadhaar inside a longer number. (Since Cycle 6 it IS found - as a test card.)
+        self.assertNotIn("aadhaar_number", [kind for kind, _ in found("Card 4111 1111 1111 1111")])
 
     def test_pan(self):
         labelled = only("PAN: ABCPE1234F")
@@ -158,6 +159,9 @@ class OverlapTests(unittest.TestCase):
         started = time.perf_counter()
         self.assertEqual(len(resolve_overlaps(many)), 200_000)
         self.assertLess(time.perf_counter() - started, 5)
+
+
+PEM_MARKER = re.compile(r"-----(?:BEGIN|END) [A-Z ]+-----")
 
 
 def text_of(finding) -> str:
@@ -238,14 +242,19 @@ class CollectorTests(unittest.TestCase):
     def test_no_finding_from_the_corpus_contains_a_raw_value(self):
         checked = 0
         for case in CASES:
-            findings = collect((case.text, case.location)).findings()
+            findings = collect((case.text, case.location), config=DetectionConfig(file_type=case.file_type)).findings()
             shown = " || ".join(map(text_of, findings)).casefold()
-            for _, value in case.expected:
+            for kind, value in case.expected:
                 # Known gaps are excluded: a value no rule detects is not masked, and can
                 # appear in a NEIGHBOUR's preview - a documented limit (decisions.md).
                 # One-letter values ("M") would match any text; their mask is tested above.
                 if case.gap or len(value) < 2:
                     continue
+                if kind == "private_key":
+                    # The BEGIN/END marker is shown on purpose - it says WHAT was found. The body never is.
+                    value = PEM_MARKER.sub("", value).replace("\\n", "\n").strip()
+                    if not value:
+                        continue
                 with self.subTest(text=case.text, value=value):
                     self.assertNotIn(value.casefold(), shown)
                     checked += 1

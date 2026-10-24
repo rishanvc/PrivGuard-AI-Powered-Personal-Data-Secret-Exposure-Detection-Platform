@@ -154,7 +154,9 @@ class Finding(models.Model):
     """
 
     class Category(models.TextChoices):
-        PERSONAL = "personal", "Personal information"  # Cycle 6 adds secrets and financial data
+        PERSONAL = "personal", "Personal information"
+        SECRET = "secret", "Secret or credential"        # Cycle 6
+        FINANCIAL = "financial", "Financial information"  # Cycle 6
 
     class Severity(models.TextChoices):  # FR-073; assigned from Cycle 6
         CRITICAL = "critical", "Critical"
@@ -176,7 +178,9 @@ class Finding(models.Model):
 
     category = models.CharField(max_length=20, choices=Category.choices)
     subcategory = models.CharField(max_length=40)  # "email_address"...; labels in detectors.TYPE_LABELS
-    severity = models.CharField(max_length=16, choices=Severity.choices, null=True, blank=True)  # NULL until Cycle 6
+    # NULL = not assessed: found by a scan that ran before severity existed (Cycle 6).
+    severity = models.CharField(max_length=16, choices=Severity.choices, null=True, blank=True)
+    severity_reason = models.TextField(blank=True)  # FR-076: why this level, in fixed wording
     confidence = models.FloatField()  # fixed per rule: a ranking aid, not a probability (D-031)
     detection_method = models.CharField(max_length=30)  # "pattern", "pattern + checksum", "context"...
     detection_version = models.PositiveSmallIntegerField()  # which version of the rules found it (SRS 7.3)
@@ -191,6 +195,10 @@ class Finding(models.Model):
     description = models.TextField()                # why it was flagged: fixed wording, never the file's text
     remediation = models.TextField(blank=True)      # Cycle 7
     review_status = models.CharField(max_length=20, choices=ReviewStatus.choices, default=ReviewStatus.NEW)
+    # The LAST review, for display. The full history is in the audit log (Cycle 7, UC-03).
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT,
+                                    related_name="+")
+    reviewed_at = models.DateTimeField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

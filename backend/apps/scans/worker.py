@@ -27,8 +27,12 @@ from django.utils import timezone
 from privguard_engine.detectors import DETECTION_VERSION, DETECTORS, DetectionConfig
 from privguard_engine.extractors import EXTRACTION_VERSION, ExtractionStatus, Limits
 from privguard_engine.isolation import CANCELLED, DONE, ERROR, TIMEOUT, ExtractionSupervisor, Job, Outcome
+from privguard_engine.risk import REMEDIATION, RISK_POLICY_VERSION, SEVERITY_POLICY_VERSION, assess, finding_risk
+
+from apps.core.ocr import ocr_config
 
 from .models import Finding, Scan, ScannedFile, WorkerHeartbeat
+from .services import refresh_scan_risk
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +60,7 @@ def extraction_limits() -> Limits:
         max_chars=settings.EXTRACTION_MAX_CHARS,
         max_pages=settings.EXTRACTION_MAX_PAGES,
         max_cells=settings.EXTRACTION_MAX_CELLS,
+        ocr=ocr_config(),  # None: OCR off or Tesseract missing - images and scanned pages are reported, not read
     )
 
 
@@ -108,6 +113,8 @@ def claim_next_scan() -> Scan | None:
                 **scan.configuration,
                 "extraction_version": EXTRACTION_VERSION,
                 "detection_version": DETECTION_VERSION,
+                "severity_policy_version": SEVERITY_POLICY_VERSION,
+                "risk_policy_version": RISK_POLICY_VERSION,
                 "detectors": sorted(DETECTORS),
                 "phone_region": settings.DETECTION_REGION,
             },
@@ -242,16 +249,21 @@ def _record_outcome(record: ScannedFile, outcome: Outcome) -> None:
 
 
 def _finding_rows(record: ScannedFile, findings) -> list[Finding]:
-    return [
-        Finding(
+    rows = []
+    for f in findings:
+        # Assessed HERE, from fields decode_reply() already checked - never by the child (D-040).
+        severity = assess(f.type, f.confidence)
+        risk = finding_risk(severity.level, f.confidence, f.occurrences, [f.location, *f.more_locations])
+        rows.append(Finding(
             scan_id=record.scan_id, scanned_file=record, category=f.category, subcategory=f.type,
+            severity=severity.level, severity_reason=severity.reason,
+            risk_score=risk.value, remediation=REMEDIATION[f.type],
             confidence=f.confidence, detection_method=f.method, detection_version=DETECTION_VERSION,
             masked_value=f.masked_value, context_preview=f.context, source_location=dict(f.location),
             other_locations=[dict(location) for location in f.more_locations], occurrences=f.occurrences,
             description=f.explanation,
-        )
-        for f in findings
-    ]
+        ))
+    return rows
 
 
 def _record_failure(record: ScannedFile, message: str, *, seconds: float) -> None:
@@ -284,6 +296,7 @@ def _refresh_counters(scan_id) -> None:
         # Grows file by file while the scan runs; NULL until a file has really been searched (D-027).
         total_findings=Finding.objects.filter(scan_id=scan_id).count() if searched else None,
     )
+    refresh_scan_risk(scan_id)  # the score grows with the findings
 
 
 def _finish(scan: Scan) -> str:

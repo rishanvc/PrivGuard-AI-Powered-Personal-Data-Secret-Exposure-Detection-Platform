@@ -16,9 +16,13 @@ generic string.
 """
 
 import logging
+import time
+from pathlib import Path
 
 from django.conf import settings
 from django.db import connection
+
+from privguard_engine.extractors import ocr
 
 from .version import __version__
 
@@ -60,11 +64,36 @@ def check_worker():
     return "error", "Not running: queued scans will wait. Start it with 'python manage.py run_worker'."
 
 
+_OCR_CACHE_SECONDS = 60
+_ocr_cache: dict = {}
+
+
 def check_ocr():
-    """OCR is optional and arrives in Cycle 8 (FR-027)."""
+    """OCR is optional (FR-027, NFR-032): say exactly why it is not available.
+
+    Starting Tesseract twice takes a moment, and the dashboard polls this, so the
+    answer is reused for a minute.
+    """
     if not settings.OCR_ENABLED:
         return "disabled", "OCR disabled (OCR_ENABLED=False)"
-    return "error", "OCR enabled but not yet implemented"
+    command = settings.TESSERACT_CMD
+    if not command or not Path(command).is_file():
+        return "error", "OCR is enabled, but TESSERACT_CMD does not point to tesseract.exe"
+    key = (command, settings.OCR_LANGUAGES)
+    cached = _ocr_cache.get(key)
+    if cached and time.monotonic() - cached[0] < _OCR_CACHE_SECONDS:
+        return cached[1]
+    found = ocr.version(command)
+    if found is None:
+        result = ("error", "OCR is enabled, but Tesseract could not be started")
+    else:
+        missing = set(settings.OCR_LANGUAGES.split("+")) - ocr.languages(command)
+        result = (
+            ("error", f"Tesseract {found} is missing language data: {', '.join(sorted(missing))}") if missing
+            else ("ok", f"Tesseract {found} ({settings.OCR_LANGUAGES})")
+        )
+    _ocr_cache[key] = (time.monotonic(), result)
+    return result
 
 
 def check_ai():

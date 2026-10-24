@@ -5,10 +5,13 @@ from django.db.models import Count
 from rest_framework import serializers
 
 from privguard_engine.detectors import TYPE_LABELS
+from privguard_engine.risk import BANDS, LEVELS, RISK_POLICY_VERSION, band
+
+from apps.audit.models import AuditLog
 
 from . import lifecycle
 from .models import Finding, Scan, ScannedFile
-from .services import IncomingFile
+from .services import REVIEW_ACTION, IncomingFile, compute_scan_risk
 
 FS = ScannedFile.Status
 PROCESSED = (FS.COMPLETED, FS.FAILED)
@@ -17,30 +20,55 @@ ACCEPTED = (FS.PENDING, FS.PROCESSING, FS.COMPLETED, FS.FAILED)  # everything th
 
 class ScanListSerializer(serializers.ModelSerializer):
     status_display = serializers.CharField(source="get_status_display", read_only=True)
+    risk_band = serializers.SerializerMethodField()
 
     class Meta:
         model = Scan
         fields = [
             "id", "name", "scan_type", "status", "status_display",
-            "total_files", "total_findings", "created_at",
+            "total_files", "total_findings", "risk_score", "risk_band", "created_at",
         ]
         read_only_fields = fields
+
+    def get_risk_band(self, scan):
+        """FR-077: "low" | "moderate" | "high" | "critical", or None while not scored."""
+        return None if scan.risk_score is None else band(scan.risk_score)[0]
 
 
 class ScanDetailSerializer(ScanListSerializer):
     file_counts = serializers.SerializerMethodField()
     extraction_counts = serializers.SerializerMethodField()
     finding_counts = serializers.SerializerMethodField()
+    severity_counts = serializers.SerializerMethodField()
+    risk = serializers.SerializerMethodField()
     progress = serializers.SerializerMethodField()
     actions = serializers.SerializerMethodField()
 
     class Meta(ScanListSerializer.Meta):
         fields = ScanListSerializer.Meta.fields + [
-            "processed_files", "failed_files", "risk_score", "configuration", "error_summary",
+            "processed_files", "failed_files", "configuration", "error_summary",
             "started_at", "completed_at", "updated_at",
-            "file_counts", "extraction_counts", "finding_counts", "progress", "actions",
+            "file_counts", "extraction_counts", "finding_counts", "severity_counts", "risk", "progress", "actions",
         ]
         read_only_fields = fields
+
+    def get_risk(self, scan):
+        """FR-075 to FR-077, FR-080: the score with every factor that produced it, and its limits."""
+        result = compute_scan_risk(scan.pk)
+        if result is None:
+            return None
+        return {"score": result.value, "band": result.band, "band_label": result.band_label,
+                "factors": list(result.factors), "limitation": result.limitation,
+                "policy_version": RISK_POLICY_VERSION,
+                # FR-077's interpretation, sent with the score so the page never repeats the thresholds.
+                "bands": [{"from": lowest, "band": key, "label": label} for lowest, key, label in BANDS]}
+
+    def get_severity_counts(self, scan):
+        """Findings per level, most serious first. "not_assessed": found before severity existed."""
+        counts = {level: 0 for level in LEVELS} | {"not_assessed": 0}
+        for row in scan.findings.order_by().values("severity").annotate(n=Count("id")):
+            counts[row["severity"] or "not_assessed"] = row["n"]
+        return counts
 
     def get_file_counts(self, scan):
         counts = {status: 0 for status in ScannedFile.Status.values}
@@ -111,22 +139,62 @@ class FindingSerializer(serializers.ModelSerializer):
 
     category_display = serializers.CharField(source="get_category_display", read_only=True)
     subcategory_display = serializers.SerializerMethodField()
+    severity_display = serializers.CharField(source="get_severity_display", default=None, read_only=True)
     review_status_display = serializers.CharField(source="get_review_status_display", read_only=True)
     file_id = serializers.UUIDField(source="scanned_file_id", read_only=True)
     file_path = serializers.CharField(source="scanned_file.relative_path", read_only=True)
+    scan_name = serializers.CharField(source="scan.name", read_only=True)
+    risk_band = serializers.SerializerMethodField()
 
     class Meta:
         model = Finding
         fields = [
             "id", "category", "category_display", "subcategory", "subcategory_display", "severity",
+            "severity_display", "severity_reason", "risk_score", "risk_band", "remediation",
             "confidence", "detection_method", "masked_value", "context_preview", "source_location",
             "other_locations", "occurrences", "description", "review_status", "review_status_display",
-            "file_id", "file_path", "created_at",
+            "reviewed_at", "file_id", "file_path", "scan_id", "scan_name", "created_at",
         ]
         read_only_fields = fields
 
     def get_subcategory_display(self, finding):
         return TYPE_LABELS.get(finding.subcategory, finding.subcategory)
+
+    def get_risk_band(self, finding):
+        """The band's thresholds live in the engine only - the browser never repeats them."""
+        return None if finding.risk_score is None else band(finding.risk_score)[0]
+
+
+class FindingDetailSerializer(FindingSerializer):
+    """Everything about one finding (FR-084), with its review history from the audit log (UC-03)."""
+
+    file_type = serializers.CharField(source="scanned_file.file_type", read_only=True)
+    reviewed_by = serializers.CharField(source="reviewed_by.username", default=None, read_only=True)
+    history = serializers.SerializerMethodField()
+
+    class Meta(FindingSerializer.Meta):
+        fields = FindingSerializer.Meta.fields + ["file_type", "reviewed_by", "history"]
+        read_only_fields = fields
+
+    def get_history(self, finding):
+        records = AuditLog.objects.filter(resource_type="finding", resource_id=str(finding.pk),
+                                          action=REVIEW_ACTION).select_related("user")[:50]
+        return [{"from_status": r.safe_metadata.get("from_status"), "to_status": r.safe_metadata.get("to_status"),
+                 "by": r.user.username, "at": r.timestamp} for r in records]
+
+
+class FindingReviewSerializer(serializers.Serializer):
+    """The body of PATCH /api/findings/{id}/. Only the review status can change (FR-086)."""
+
+    review_status = serializers.ChoiceField(choices=Finding.ReviewStatus.choices)
+
+    def validate(self, attrs):
+        others = set(self.initial_data) - {"review_status"}
+        if others:
+            raise serializers.ValidationError(
+                f"Only review_status can be changed; {', '.join(sorted(others))} cannot."
+            )
+        return attrs
 
 
 class ScanCreateSerializer(serializers.Serializer):

@@ -5,9 +5,30 @@ Enough to recognise and investigate a finding, never enough to reuse the value.
 
 from __future__ import annotations
 
+import math
 import re
+from collections import Counter
 
 _DIGIT_RUN = re.compile(r"\d{4,}")
+_TOKEN_RUN = re.compile(r"[A-Za-z0-9+/=_\-]{20,}")
+
+
+def shannon_entropy(text: str) -> float:
+    """Average bits per character, from how often each character occurs.
+
+    "aaaa" -> 0.0; English words -> about 2-3; a random base64 key -> 5-6.
+    A string of length n can never exceed log2(n), so short strings score low.
+    """
+    if not text:
+        return 0.0
+    total = len(text)
+    return -sum(n / total * math.log2(n / total) for n in Counter(text).values())
+
+
+def looks_random(token: str) -> bool:
+    """Upper case, lower case and digits mixed - or simply very high entropy."""
+    mixed = any(c.isupper() for c in token) and any(c.islower() for c in token) and any(c.isdigit() for c in token)
+    return mixed or shannon_entropy(token) >= 4.2
 
 
 def keep_ends(value: str, *, start: int = 0, end: int = 0, char: str = "*") -> str:
@@ -50,9 +71,11 @@ def mask_text(value: str, *, keep: int = 1, limit: int = 32) -> str:
 
 
 def sanitise_preview(text: str) -> str:
-    """Mask every run of 4+ digits in text that no detector claimed.
+    """Mask, in text that no detector claimed, every run of 4+ digits and
+    every long random-looking token (Cycle 6).
 
-    Defence in depth for previews: a number we failed to recognise as
-    sensitive should still not be stored in full beside a finding.
+    Defence in depth for previews: a number or a key in a format we failed to
+    recognise should still not be stored in full beside a finding.
     """
+    text = _TOKEN_RUN.sub(lambda m: "*" * len(m.group()) if looks_random(m.group()) else m.group(), text)
     return _DIGIT_RUN.sub(lambda m: "*" * len(m.group()), text)

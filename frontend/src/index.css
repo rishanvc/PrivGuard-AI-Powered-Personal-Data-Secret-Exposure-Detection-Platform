@@ -1,12 +1,20 @@
 @import "tailwindcss";
 
 /* Severity palette (NFR-035: consistent labels and visual indicators).
-   Defined once here so every component - findings list, dashboard charts,
-   reports - uses identical colours. Cycle 7 relies on these. */
+   Defined once here so every component - badges, dashboard bars, risk meters,
+   reports - uses identical colours.
+
+   Validated in Cycle 7 with a colour-vision checker on the white surface:
+   adjacent levels stay distinct for colour-blind readers (worst deltaE 8.3,
+   medium vs high; target >= 8) and with normal vision (16.0; floor 15). The
+   first values failed: medium #ca8a04 and high #ea580c were nearly identical
+   (2.9). Medium sits below 3:1 against white, so every colour is paired with
+   its written label - colour never carries severity on its own. Info is a
+   neutral gray on purpose. */
 @theme {
-  --color-sev-critical: #b91c1c;
+  --color-sev-critical: #991b1b;
   --color-sev-high:     #ea580c;
-  --color-sev-medium:   #ca8a04;
+  --color-sev-medium:   #d4a017;
   --color-sev-low:      #2563eb;
   --color-sev-info:     #64748b;
 }

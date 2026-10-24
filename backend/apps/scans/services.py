@@ -24,8 +24,14 @@ from privguard_engine.intake import (
     safe_relative_path,
 )
 
+from apps.audit import services as audit
+from apps.core.ocr import ocr_config
+from privguard_engine.detectors import TYPE_LABELS
+from privguard_engine.risk import LEVELS, NOT_COUNTED, Counted, ScanScore, band, scan_risk
+from privguard_engine.risk.scoring import SERIOUS
+
 from . import lifecycle
-from .models import Scan, ScannedFile
+from .models import Finding, Scan, ScannedFile
 from .storage import private_upload_storage, scan_dir_name
 
 logger = logging.getLogger(__name__)
@@ -109,7 +115,7 @@ def _inventory_file(scan, incoming: IncomingFile, max_file_bytes: int, accepted_
         return _record(record, F.SKIPPED, "Empty file: there is nothing to scan.")
 
     # 3. Size, real type and structure - decided by the framework-free engine.
-    inspection = inspect_file(record.file_name, uploaded, uploaded.size, max_file_bytes)
+    inspection = inspect_file(record.file_name, uploaded, uploaded.size, max_file_bytes, ocr=ocr_config() is not None)
     record.file_type = inspection.file_type
     if inspection.verdict is Verdict.REJECTED:
         return _record(record, F.REJECTED, inspection.reason)
@@ -212,6 +218,59 @@ def delete_scan(scan: Scan) -> None:
         scan.delete()
 
 
+# ---------------------------------------------------------------- risk (Cycle 7)
+
+def compute_scan_risk(scan_id) -> ScanScore | None:
+    """The scan's 0-100 score and its explanation; None while nothing has been searched (D-027).
+
+    Only the riskiest counted finding and the serious ones change the score, so
+    only those rows are loaded - a scan can hold many thousands of findings.
+    """
+    if Scan.objects.filter(pk=scan_id).values_list("total_findings", flat=True).first() is None:
+        return None
+    findings = Finding.objects.filter(scan_id=scan_id)
+    counted = findings.filter(risk_score__isnull=False).exclude(review_status__in=NOT_COUNTED)
+    fields = ("risk_score", "subcategory", "scanned_file__relative_path")
+    rows = (list(counted.filter(risk_score__gte=SERIOUS).values_list(*fields))
+            or list(counted.order_by("-risk_score").values_list(*fields)[:1]))
+    return scan_risk(
+        (Counted(risk, f"{TYPE_LABELS.get(kind, kind)} in {path}") for risk, kind, path in rows),
+        excluded=findings.filter(review_status__in=NOT_COUNTED).count(),
+        not_assessed=findings.filter(risk_score__isnull=True).exclude(review_status__in=NOT_COUNTED).count(),
+    )
+
+
+def refresh_scan_risk(scan_id) -> None:
+    """Store the current score - after each file the worker finishes, and after each review (FR-075)."""
+    result = compute_scan_risk(scan_id)
+    Scan.objects.filter(pk=scan_id).update(risk_score=None if result is None else result.value)
+
+
+# ---------------------------------------------------------------- review (Cycle 7)
+
+REVIEW_ACTION = "finding.review"
+
+
+def review_finding(*, finding: Finding, user, status: str) -> Finding:
+    """FR-086, UC-03: change a finding's review status, record who did it, and rescore its scan.
+
+    All in one transaction: the status, the audit record and the score change
+    together or not at all. The row lock stops two reviews from interleaving.
+    A review that changes nothing records nothing.
+    """
+    with transaction.atomic():
+        current = Finding.objects.select_for_update().get(pk=finding.pk)
+        previous = current.review_status
+        if previous != status:
+            Finding.objects.filter(pk=current.pk).update(review_status=status, reviewed_by=user,
+                                                         reviewed_at=timezone.now())
+            audit.record(user=user, action=REVIEW_ACTION, resource_type="finding", resource_id=current.pk,
+                         metadata={"scan_id": str(current.scan_id), "finding_type": current.subcategory,
+                                   "from_status": previous, "to_status": status})
+            refresh_scan_risk(current.scan_id)
+    return Finding.objects.select_related("scanned_file", "scan", "reviewed_by").get(pk=finding.pk)
+
+
 # ---------------------------------------------------------------- dashboard
 
 def dashboard_summary(user) -> dict:
@@ -222,6 +281,20 @@ def dashboard_summary(user) -> dict:
         row["status"]: row["n"]
         for row in scans.order_by().values("status").annotate(n=Count("id"))
     }
+    # SUM skips NULLs, and is NULL when every scan is: "not searched" survives to the dashboard.
+    total_findings = scans.aggregate(n=Sum("total_findings"))["n"]
+    searched = total_findings is not None
+    findings = Finding.objects.filter(scan__user=user)
+    # "Open": not reviewed away as false positive or resolved - the findings that still need attention.
+    open_findings = findings.exclude(review_status__in=NOT_COUNTED)
+
+    def counts(queryset, field, keys):
+        result = dict.fromkeys(keys, 0)
+        for row in queryset.order_by().values(field).annotate(n=Count("id")):
+            result[row[field] or "not_assessed"] = row["n"]
+        return result
+
+    riskiest = scans.filter(risk_score__isnull=False).order_by("-risk_score", "-created_at")[:5]
     return {
         "total_scans": scans.count(),
         "scans_by_status": by_status,
@@ -230,7 +303,18 @@ def dashboard_summary(user) -> dict:
         # Finished by the worker - whether or not their text could be read; how
         # completely each was read is shown per scan (extraction_counts).
         "files_processed": files.filter(processing_status__in=(F.COMPLETED, F.FAILED)).count(),
-        # SUM skips NULLs, and is NULL when every scan is: "not searched" survives to the dashboard.
-        "total_findings": scans.aggregate(n=Sum("total_findings"))["n"],
-        "critical_high_findings": None,  # severity arrives in Cycle 6
+        "total_findings": total_findings,
+        # Everything below is NULL while nothing has been searched, like total_findings:
+        # "0 critical" must mean "looked, and found none".
+        "critical_high_findings": open_findings.filter(
+            severity__in=(Finding.Severity.CRITICAL, Finding.Severity.HIGH)
+        ).count() if searched else None,
+        "severity_counts": counts(open_findings, "severity", (*LEVELS, "not_assessed")) if searched else None,
+        "category_counts": counts(open_findings, "category", Finding.Category.values) if searched else None,
+        "review_counts": counts(findings, "review_status", Finding.ReviewStatus.values) if searched else None,
+        "riskiest_scans": [
+            {"id": scan.pk, "name": scan.name, "risk_score": scan.risk_score, "risk_band": band(scan.risk_score)[0],
+             "total_findings": scan.total_findings}
+            for scan in riskiest
+        ],
     }

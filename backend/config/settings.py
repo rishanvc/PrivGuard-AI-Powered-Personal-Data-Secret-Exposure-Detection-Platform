@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     "apps.accounts",
     "apps.scans",
     "apps.core",
+    "apps.audit",
 ]
 
 MIDDLEWARE = [
@@ -234,9 +235,17 @@ DETECTION_REGION = env("DETECTION_REGION", default="IN").upper()
 
 # ---------------------------------------------------------------- optional components
 
-# FR-027 / Cycle 8. Absence must degrade gracefully (NFR-032).
+# FR-023 / FR-027 / Cycle 8. Absence must degrade gracefully (NFR-032): with OCR
+# off, images are "not supported" and scanned pages "partly read" - never "clean".
 OCR_ENABLED = env.bool("OCR_ENABLED", default=False)
-TESSERACT_CMD = env("TESSERACT_CMD", default="")
+TESSERACT_CMD = env("TESSERACT_CMD", default="")         # full path to tesseract.exe
+OCR_LANGUAGES = env("OCR_LANGUAGES", default="eng")      # Cycle 8 decision: English
+OCR_DPI = env.int("OCR_DPI", default=300)                # scanned PDF pages are rendered at this
+OCR_MAX_PAGES = env.int("OCR_MAX_PAGES", default=50)     # scanned pages read per PDF
+OCR_MAX_MEGAPIXELS = env.int("OCR_MAX_MEGAPIXELS", default=40)  # larger images are refused, unread
+# OCR must finish inside the child's timeout, with time left for everything else.
+OCR_TIME_BUDGET_SECONDS = min(env.int("OCR_TIME_BUDGET_SECONDS", default=90),
+                              max(EXTRACTION_TIMEOUT_SECONDS - 20, 10))
 
 # FR-062 / Cycle 9. FR-063 + NFR-048: core scanning must work with this off.
 AI_ENABLED = env.bool("AI_ENABLED", default=False)

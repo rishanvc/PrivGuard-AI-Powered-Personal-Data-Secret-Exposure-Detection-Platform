@@ -68,6 +68,26 @@ cd backend
 | `employees.csv` | **22** | A column per kind of personal data; the column header supplies the context. Aadhaar numbers pass the Verhoeff checksum. "Female" and "B+" each appear twice, so each is **one** finding with 2 occurrences; both are hidden completely as `****` |
 | `hr-letter.docx` | **9** | Values found by their **labels** in running text: a salutation, employee ID, PAN, date of birth, address, PIN code and mobile number, plus the document's author. `hr@example.com` is found with confidence 0.40, because `example.com` is reserved for documentation |
 | `notes.txt` | **4** | "Customer Name: Ravi Example Order ID: 4421": the name stops where the next field starts. "Please call Asha Example…" is **not** found: a name in prose with no label is a known gap (D-028). Religion is flagged as special-category data |
-| `lookalikes.txt` | **0** | Every line *resembles* personal data: an invoice number that is a valid mobile number, a card number, an ISBN, a non-PAN product code, `logo@2x.png`, an SSH remote, a date without a birth label, a blank form, a bare 12-digit number that passes the Aadhaar checksum |
+| `lookalikes.txt` | **0** | Every line *resembles* personal data: an invoice number that is a valid mobile number, a card number that fails the Luhn check, an ISBN, a non-PAN product code, `logo@2x.png`, an SSH remote, a date without a birth label, a blank form, a bare 12-digit number that passes the Aadhaar checksum |
 
-**Totals: 35 findings.** Names are "Example" people; "98765 43210" is the placeholder common in Indian documentation; PANs are format-valid inventions; email domains are invented (`mailhost-synthetic.net`) or reserved (`example.com`). Aadhaar-format numbers carry a valid check digit: like any 12 digits, one could coincide with an issued number, but on its own it identifies no one. `backend/tests/engine/test_detection_samples.py` checks this table against the real detectors.
+**Totals: 35 findings.** Since Cycle 6 every finding also has a severity; see below. Names are "Example" people; "98765 43210" is the placeholder common in Indian documentation; PANs are format-valid inventions; email domains are invented (`mailhost-synthetic.net`) or reserved (`example.com`). Aadhaar-format numbers carry a valid check digit: like any 12 digits, one could coincide with an issued number, but on its own it identifies no one. `backend/tests/engine/test_detection_samples.py` checks this table against the real detectors.
+
+## `secrets-finance-demo/` — secrets, financial data and severity (Cycle 6)
+
+**Generated on your machine, never committed.** Every value is fake and grants access to nothing, but the files hold strings in real credential and card formats, which secret scanners and GitHub's push protection would report (D-038). Only the generator is in the repository:
+
+```bash
+backend/.venv/Scripts/python.exe samples/make_secrets_finance_demo.py
+```
+
+Upload all five files as one scan. The findings list opens with the most serious first.
+
+| File | Findings | What it demonstrates |
+|---|---|---|
+| `deploy.env` | **5** | A database connection string, a GitHub token and two AWS keys (all **Critical**), and a Stripe *test* key (**Informational**). `SMTP_PASSWORD=changeme` is a placeholder and `TOKEN_EXPIRY_SECONDS` only describes a secret: neither is reported |
+| `build-server.pem` | **1** | A private key (**Critical**). Its contents are never shown, not even masked |
+| `settings.json` | **3** | A secret in a setting and a JWT carrying an email claim (**High**), and a random-looking value found only by entropy (**Medium**: High, lowered one level because the evidence is weak). The `integrity` hash is random by design and is not reported |
+| `payments.csv` | **12** | Column headers supply the context: card numbers, security codes and account numbers (**High**), UPI IDs (**Medium**), names and IFSC codes (**Low**) |
+| `bank-letter.docx` | **9** | Labels in running text: account, IFSC, IBAN, SWIFT, GSTIN, a UTR written without a colon, and a published test card (**Informational**) |
+
+**Totals: 30 findings — Critical 5, High 10, Medium 3, Low 10, Informational 2.** `backend/tests/engine/test_secrets_finance_samples.py` builds these files in a temporary folder and checks this table, so it holds even where the samples were never generated.

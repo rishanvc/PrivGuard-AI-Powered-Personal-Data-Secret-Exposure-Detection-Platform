@@ -15,7 +15,8 @@ import sys
 from pathlib import Path
 
 from ..intake import Verdict, inspect_file
-from . import extract_file
+from . import Limits, extract_file
+from .ocr import OcrConfig
 
 
 def _location(location) -> str:
@@ -26,7 +27,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m privguard_engine.extractors", description=__doc__.splitlines()[0])
     parser.add_argument("path", type=Path, help="a local file to extract")
     parser.add_argument("--max", type=int, default=40, help="segments to print (default: 40)")
+    parser.add_argument("--tesseract", metavar="PATH",
+                        help="tesseract.exe, to read images and scanned PDF pages (Cycle 8); OCR is off without it")
     args = parser.parse_args(argv)
+    ocr = OcrConfig(command=args.tesseract) if args.tesseract else None
 
     # When output is piped (Git Bash, VS Code tasks), Windows Python defaults to
     # the legacy cp1252 code page, which a UTF-8 terminal shows as "�". Always
@@ -36,7 +40,7 @@ def main(argv: list[str] | None = None) -> int:
 
     size = args.path.stat().st_size
     with args.path.open("rb") as stream:
-        inspection = inspect_file(args.path.name, stream, size, max_bytes=max(size, 1))
+        inspection = inspect_file(args.path.name, stream, size, max_bytes=max(size, 1), ocr=ocr is not None)
     print(f"{args.path.name}: {inspection.verdict.value} as '{inspection.file_type or 'unknown'}'"
           + (f" - {inspection.reason}" if inspection.reason else ""))
     if inspection.verdict is not Verdict.SUPPORTED:
@@ -51,7 +55,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  [{_location(segment.location)}] {text[:100]}{'...' if len(text) > 100 else ''}")
         shown += 1
 
-    result = extract_file(str(args.path), inspection.file_type, sink=show)
+    result = extract_file(str(args.path), inspection.file_type, limits=Limits(ocr=ocr), sink=show)
     if shown > args.max:
         print(f"  ... and {shown - args.max} more segments")
     print(f"result: {result.status.value}" + (f" - {result.reason}" if result.reason else ""))

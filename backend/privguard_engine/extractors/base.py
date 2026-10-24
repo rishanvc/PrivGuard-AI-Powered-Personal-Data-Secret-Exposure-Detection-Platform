@@ -62,6 +62,8 @@ class Limits:
     max_total_uncompressed: int = 512 * MB  # every part of an Office file together
     max_ratio: int = 250                    # compression ratio allowed for large parts...
     ratio_floor: int = 10 * MB              # ...where "large" starts
+    # privguard_engine.extractors.ocr.OcrConfig when OCR is on (Cycle 8); None reads no images and no scanned pages.
+    ocr: object | None = None
 
 
 class ExtractionError(Exception):
