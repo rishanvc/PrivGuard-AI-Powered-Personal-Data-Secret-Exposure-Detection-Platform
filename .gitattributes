@@ -1,0 +1,10 @@
+# Default: normalise line endings in the repository, let Git decide per file.
+* text=auto
+
+# Sample fixtures are byte-exact inputs to the extraction tests - line
+# endings and encodings are part of what each one is testing. Git's text
+# heuristic misreads simple PDFs (no NUL bytes in the first 8000) as text
+# and rewrites their line endings on checkout, which changes the bytes the
+# generators wrote. Turn conversion off for everything under the demo
+# folders; -text rather than binary so text fixtures still diff normally.
+samples/*-demo/** -text
